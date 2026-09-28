@@ -25,6 +25,10 @@ struct HudInfo {
     bool        mouse_captured = false;
     std::string last_key;
     std::string movement_mode;
+    std::size_t entity_count   = 0;
+    std::size_t entity_contacts = 0;
+    std::string air_model;
+    double      terminal_velocity = 0.0;
 };
 
 class Hud {
@@ -41,8 +45,16 @@ public:
             lines.push_back(format("Speed: %.2f b/s%s", hspeed, info.on_ground ? "  (ground)" : "  (air)"));
             lines.push_back("Camera: " + info.camera_mode);
             lines.push_back(format("Faces: %zu drawn / %zu exposed", info.stats.faces_drawn, info.stats.faces_total));
+            lines.push_back(format("Quads: %zu drawn / %zu total", info.stats.quads_drawn, info.stats.quads_total));
             lines.push_back(format("Chunks: %zu / %zu in view", info.stats.chunks_visible, info.stats.chunks_total));
+            lines.push_back(format("Render distance: %.0f blocks", info.stats.render_distance));
             lines.push_back("Movement: " + info.movement_mode);
+            lines.push_back(format("Entities: %zu (%zu touching)", info.entity_count, info.entity_contacts));
+            
+            if (std::isfinite(info.terminal_velocity))
+                lines.push_back(format("Air: %s (terminal %.1f b/s)", info.air_model.c_str(), info.terminal_velocity));
+            else
+                lines.push_back(format("Air: %s (no terminal velocity)", info.air_model.c_str()));
 
             if (info.target)
                 lines.push_back(format("Target: %s (%d, %d, %d) %s", info.target_name.c_str(), info.target->block.x, info.target->block.y, info.target->block.z, face_name(info.target->face)));
@@ -53,7 +65,7 @@ public:
         }
 
         std::string hint = info.mouse_captured
-            ? "WASD move   Space jump   Shift sprint   Ctrl Crouch   Z prone   F5 camera   R respawn   F3 HUD   Esc release mouse"
+            ? "WASD move   Space jump   Shift sprint   Ctrl Crouch   Z prone   F5 camera   R respawn   -/= render distance   F3 HUD   Esc release mouse"
             : "Click to capture the mouse";
 
         if (rs.show_last_key && !info.last_key.empty()) hint += "      last key: \"" + info.last_key + "\"";

@@ -7,6 +7,7 @@
 #include "../block/blocks.hpp"
 #include "../camera/game_camera.hpp"
 #include "../core/settings.hpp"
+#include "../entity/entity_manager.hpp"
 #include "../entity/player.hpp"
 #include "../input/input_bindings.hpp"
 #include "../render/block_outline_renderer.hpp"
@@ -22,17 +23,19 @@ class Game {
 public:
     explicit Game(const GameSettings& settings = GameSettings{})
         : m_settings(settings),
-          m_block_ids(DefaultBlocks::register_all(m_registry)),
+          m_block_ids(DefaultBlocks::register_all(m_registry, settings.render.block_color_variation)),
           m_attributes(make_attributes()),
           m_movement_modes(make_movement_modes()),
           m_world(m_registry, settings.world),
           m_generator(std::make_unique<FlatWorldGenerator>(settings.flat_world)),
           m_physics(m_world.settings()),
-          m_player(m_attributes, m_movement_modes),
-          m_camera(settings.camera, 1, 1),
+          m_entities(settings.entities),
+          m_player(&m_entities.spawn<Player>(m_attributes, m_movement_modes)),
+          m_camera(settings.camera, 1, 1, settings.render.render_distance),
           m_bindings(InputBindings::defaults()),
           m_capsule(settings.render.capsule_segments, settings.render.capsule_rings,
                     settings.render.player_color, settings.render.player_visor) {
+        m_meshes.options().merge_faces = settings.render.merge_faces;
         m_camera.add_rig(std::make_unique<FirstPersonRig>());
         m_camera.add_rig(std::make_unique<ThirdPersonBackRig>());
         m_camera.add_rig(std::make_unique<ThirdPersonFrontRig>());
@@ -42,11 +45,11 @@ public:
         m_cursor = std::make_unique<fizmo::windows::CursorLock>(window);
         m_generator->generate(m_world);
         m_meshes.update(m_world);
-        m_player.respawn(m_generator->spawn_point(m_world));
+        m_player->respawn(m_generator->spawn_point(m_world));
         m_camera.set_viewport(viewport_w, viewport_h);
         m_viewport_w = viewport_w;
         m_viewport_h = viewport_h;
-        m_camera.update(m_player, m_world, 1.0, 0.0);
+        m_camera.update(*m_player, m_world, 1.0, 0.0);
     }
 
     void shutdown() noexcept { if (m_cursor) m_cursor->unlock(); }
@@ -73,13 +76,15 @@ public:
         if (mouse_locked()) {
             const double sens = m_settings.controls.mouse_sensitivity;
             const double invert = m_settings.controls.invert_y ? -1.0 : 1.0;
-            m_player.add_look(-input.mouse_delta_x() * sens, -input.mouse_delta_y() * sens * invert);
+            m_player->add_look(-input.mouse_delta_x() * sens, -input.mouse_delta_y() * sens * invert);
         }
 
         if (m_bindings.just_pressed(input, Action::CycleCamera))  m_camera.cycle_rig();
         if (m_bindings.just_pressed(input, Action::ReleaseMouse) && m_cursor) m_cursor->unlock();
         if (m_bindings.just_pressed(input, Action::ToggleHud))    m_settings.render.show_debug_hud = !m_settings.render.show_debug_hud;
-        if (m_bindings.just_pressed(input, Action::Respawn))      m_player.respawn(m_generator->spawn_point(m_world));
+        if (m_bindings.just_pressed(input, Action::Respawn))      m_player->respawn(m_generator->spawn_point(m_world));
+        if (m_bindings.just_pressed(input, Action::RenderDistanceUp))   set_render_distance(m_settings.render.render_distance + m_settings.render.render_distance_step);
+        if (m_bindings.just_pressed(input, Action::RenderDistanceDown)) set_render_distance(m_settings.render.render_distance - m_settings.render.render_distance_step);
         MovementIntent intent;
         intent.forward = (m_bindings.is_down(input, Action::MoveForward) ? 1.0 : 0.0) - (m_bindings.is_down(input, Action::MoveBack) ? 1.0 : 0.0);
         intent.strafe  = (m_bindings.is_down(input, Action::MoveRight) ? 1.0 : 0.0) - (m_bindings.is_down(input, Action::MoveLeft) ? 1.0 : 0.0);
@@ -88,39 +93,44 @@ public:
         intent.sprint  = m_bindings.is_down(input, Action::Sprint);
         intent.crouch  = m_bindings.is_down(input, Action::Crouch);
         intent.crawl   = m_bindings.is_down(input, Action::Crawl);
-        m_player.set_intent(intent);
+        m_player->set_intent(intent);
         advance(frame_dt);
         m_meshes.update(m_world);
-        m_target = raycast_blocks(m_world, m_player.eye_position(m_alpha), m_player.look_direction(), m_player.attributes().value(Attributes::BlockReach));
-        m_camera.update(m_player, m_world, m_alpha, frame_dt);
+        m_target = raycast_blocks(m_world, m_player->eye_position(m_alpha), m_player->look_direction(), m_player->attributes().value(Attributes::BlockReach));
+        m_camera.update(*m_player, m_world, m_alpha, frame_dt);
     }
 
     void render(fizmo::windows::Renderer& renderer, double fps_average) {
         renderer.begin_3d(m_camera.camera());
         renderer.set_light_3d(fizmo::graphics::Light3D::sun({ -0.35, 0.55, -1.0 }));
-        m_stats = m_world_renderer.render(renderer, m_meshes, m_camera.camera());
-        if (m_camera.shows_player()) m_capsule.render(renderer, m_player, m_alpha);
+        m_stats = m_world_renderer.render(renderer, m_meshes, m_camera.camera(), m_settings.render.render_distance);
+        if (m_camera.shows_player()) m_capsule.render(renderer, *m_player, m_alpha);
         if (m_target) m_outline.render(renderer, m_world, *m_target, m_settings.render);
         renderer.end_3d();
         HudInfo info;
         info.fps_average    = fps_average;
-        info.position       = m_player.interpolated_position(m_alpha);
-        info.velocity       = m_player.velocity();
-        info.on_ground      = m_player.on_ground();
+        info.position       = m_player->interpolated_position(m_alpha);
+        info.velocity       = m_player->velocity();
+        info.on_ground      = m_player->on_ground();
         info.camera_mode    = m_camera.mode_name();
         info.stats          = m_stats;
         info.target         = m_target;
         info.target_name    = m_target ? m_world.block_at(m_target->block).name() : std::string();
         info.mouse_captured = mouse_locked();
         info.last_key       = m_last_key;
-        info.movement_mode  = m_player.movement_mode() ? m_player.movement_mode()->id() : std::string("none");
+        info.movement_mode  = m_player->movement_mode() ? m_player->movement_mode()->id() : std::string("none");
+        info.entity_count    = m_entities.size();
+        info.entity_contacts = m_entities.last_contact_count();
+        info.air_model         = m_world.settings().air_resistance->id();
+        info.terminal_velocity = m_physics.terminal_velocity(*m_player, m_player->effective_gravity_scale(), m_player->effective_drag_scale());
         m_hud.render(renderer, m_viewport_w, m_viewport_h, info, m_settings.render);
     }
 
 public:
     GameSettings&         settings()        noexcept { return m_settings; }
     World&                world()           noexcept { return m_world; }
-    Player&               player()          noexcept { return m_player; }
+    Player&               player()          noexcept { return *m_player; }
+    EntityManager&        entities()        noexcept { return m_entities; }
     GameCamera&           camera()          noexcept { return m_camera; }
     BlockRegistry&        blocks()          noexcept { return m_registry; }
     AttributeRegistry&    attribute_types() noexcept { return m_attributes; }
@@ -129,6 +139,13 @@ public:
     const DefaultBlocks& block_ids() const noexcept { return m_block_ids; }
     const WorldRenderStats& last_render_stats() const noexcept { return m_stats; }
     const std::optional<RaycastHit>& target() const noexcept { return m_target; }
+
+    void set_render_distance(double distance) noexcept {
+        m_settings.render.render_distance = vclamp(distance, EngineLimits::MIN_RENDER_DISTANCE, EngineLimits::MAX_RENDER_DISTANCE);
+        m_camera.set_view_distance(m_settings.render.render_distance);
+    }
+
+    double render_distance() const noexcept { return m_settings.render.render_distance; }
 
     void advance(double dt) {
         const double tick = 1.0 / m_settings.simulation.tick_rate;
@@ -147,11 +164,11 @@ public:
 
 private:
     void tick_once(double dt) {
-        TickContext ctx{ m_world, m_physics, dt };
-        m_player.tick(ctx);
-        if (m_jump_latch) { m_jump_latch = false; MovementIntent i = m_player.intent(); i.jump = false; m_player.set_intent(i); }
+        TickContext ctx{ m_world, m_physics, m_entities, dt };
+        m_entities.tick(ctx);
+        if (m_jump_latch) { m_jump_latch = false; MovementIntent i = m_player->intent(); i.jump = false; m_player->set_intent(i); }
         const double void_z = m_world.settings().min_z - m_world.settings().void_depth;
-        if (m_player.position().z < void_z) m_player.respawn(m_generator->spawn_point(m_world));
+        if (m_player->position().z < void_z) m_player->respawn(m_generator->spawn_point(m_world));
     }
 
     static AttributeRegistry make_attributes() {
@@ -175,7 +192,8 @@ private:
     std::unique_ptr<WorldGenerator> m_generator;
     ChunkMeshCache                  m_meshes;
     EntityPhysics                   m_physics;
-    Player                          m_player;
+    EntityManager                   m_entities;
+    Player*                         m_player;
     GameCamera                      m_camera;
     InputBindings                   m_bindings;
     std::unique_ptr<fizmo::windows::CursorLock> m_cursor;

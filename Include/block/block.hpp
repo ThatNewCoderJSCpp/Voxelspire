@@ -1,6 +1,7 @@
 #ifndef VOXELSPIRE_BLOCK_BLOCK_HPP
 #define VOXELSPIRE_BLOCK_BLOCK_HPP
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -18,6 +19,7 @@ struct BlockProperties {
     bool opaque  = true;
     bool visible = true;
     bool fluid   = false;
+    double color_variation = 1.0;
 };
 
 class Block {
@@ -49,7 +51,9 @@ public:
     virtual void on_removed(World&, const BlockPos&) {}
 
 protected:
-    static Color vary(const Color& base, const BlockPos& pos, int amount) noexcept {
+    Color vary(const Color& base, const BlockPos& pos, int max_amount) const noexcept {
+        const int amount = static_cast<int>(std::lround(max_amount * vmax(m_props.color_variation, 0.0)));
+        if (amount <= 0) return base;
         std::uint32_t h = static_cast<std::uint32_t>(pos.x) * 374761393u
                         + static_cast<std::uint32_t>(pos.y) * 668265263u
                         + static_cast<std::uint32_t>(pos.z) * 2147483647u;

@@ -24,7 +24,12 @@ public:
         return { floor_div(p.x, Chunk::SIZE), floor_div(p.y, Chunk::SIZE), floor_div(p.z, Chunk::SIZE) };
     }
 
-    bool in_build_range(const BlockPos& p) const noexcept { return p.z >= m_settings.min_z && p.z < m_settings.max_z; }
+    bool in_build_range(const BlockPos& p) const noexcept { return p.z >= m_settings.min_z && p.z < m_settings.max_z && in_horizontal_bounds(p); }
+
+    bool in_horizontal_bounds(const BlockPos& p) const noexcept {
+        const int limit = m_settings.horizontal_limit;
+        return p.x >= -limit && p.x < limit && p.y >= -limit && p.y < limit;
+    }
 
     BlockId block_id_at(const BlockPos& p) const noexcept {
         const Chunk* c = chunk_at(chunk_pos_of(p));

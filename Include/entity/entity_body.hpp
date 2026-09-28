@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include "player_defaults.hpp"
 
 namespace voxelspire {
 
@@ -13,14 +14,10 @@ namespace Poses {
     inline const std::string Prone     = "voxelspire:prone";
 } // namespace Poses
 
-constexpr double PLAYER_DEFAULT_WIDTH      = 0.64;
-constexpr double PLAYER_DEFAULT_HEIGHT     = PLAYER_DEFAULT_WIDTH * 3;
-constexpr double PLAYER_DEFUALT_EYE_HEIGHT = PLAYER_DEFAULT_HEIGHT / 1.2;
-
 struct PoseDimensions {
-    double width      = PLAYER_DEFAULT_WIDTH;
-    double height     = PLAYER_DEFAULT_HEIGHT;
-    double eye_height = PLAYER_DEFUALT_EYE_HEIGHT;
+    double width      = PlayerDefaults::width;
+    double height     = PlayerDefaults::height::standing;
+    double eye_height = PlayerDefaults::eye_height::standing;
 };
 
 class EntityBody {
@@ -39,10 +36,26 @@ public:
     const PoseDimensions& standing() const noexcept { return m_poses.at(Poses::Standing); }
 
     static EntityBody player() {
-        EntityBody body({ PLAYER_DEFAULT_WIDTH, PLAYER_DEFAULT_HEIGHT, PLAYER_DEFUALT_EYE_HEIGHT });
-        body.set(Poses::Crouching, { PLAYER_DEFAULT_WIDTH, PLAYER_DEFAULT_HEIGHT * (1.0 - 0.15), PLAYER_DEFUALT_EYE_HEIGHT * (1.0 - 0.30)});
-        body.set(Poses::Prone,     { PLAYER_DEFAULT_WIDTH, PLAYER_DEFAULT_HEIGHT * (1.0 - 0.80), PLAYER_DEFUALT_EYE_HEIGHT * (1.0 - 0.90)});
+        EntityBody body({ 
+            PlayerDefaults::width,
+            PlayerDefaults::height::standing,
+            PlayerDefaults::eye_height::standing
+        });
+
+        body.set(Poses::Crouching, { 
+            PlayerDefaults::width,
+            PlayerDefaults::height::crouching,
+            PlayerDefaults::eye_height::crouching
+        });
+        
+        body.set(Poses::Prone, { 
+            PlayerDefaults::width,
+            PlayerDefaults::height::crawling,
+            PlayerDefaults::eye_height::crawling
+        });
+
         return body;
+
     }
 
 private:

@@ -11,7 +11,8 @@ namespace voxelspire {
 enum class Action {
     MoveForward = 0, MoveBack, MoveLeft, MoveRight,
     Jump, Sprint, Crawl, Crouch,
-    CycleCamera, ReleaseMouse, Respawn, ToggleHud
+    CycleCamera, ReleaseMouse, Respawn, ToggleHud,
+    RenderDistanceUp, RenderDistanceDown
 };
 
 struct ActionHash { std::size_t operator()(Action a) const noexcept { return static_cast<std::size_t>(a); } };
@@ -34,6 +35,8 @@ public:
         b.bind(Action::ReleaseMouse, { "Escape" });
         b.bind(Action::Respawn,      { "r", "R" });
         b.bind(Action::ToggleHud,    { "F3" });
+        b.bind(Action::RenderDistanceUp,   { "=", "+" });
+        b.bind(Action::RenderDistanceDown, { "-", "_" });
         return b;
     }
 

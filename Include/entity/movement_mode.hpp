@@ -22,6 +22,7 @@ struct MovementIntent {
     bool   sprint  = false;
     bool   crouch  = false;
     bool   crawl   = false;
+    bool   fly     = false;
 };
 
 struct MovementStats {
@@ -30,6 +31,7 @@ struct MovementStats {
     double air_accel     = 0.0;
     double jump_velocity = 0.0;
     double gravity_scale = 1.0;
+    double drag_scale    = 1.0;
 };
 
 struct MovementContext {
@@ -38,6 +40,9 @@ struct MovementContext {
     bool                                          on_ground;
     bool                                          in_fluid;
     std::function<bool(const std::string& pose)>  fits;
+    double                                        vertical_velocity = 0.0;
+    double                                        fall_distance     = 0.0;
+    std::function<double(double max_depth)>       ground_distance;
 };
 
 class MovementMode {
@@ -54,6 +59,7 @@ public:
     virtual bool   is_active(const MovementContext& ctx) const = 0;
     virtual double acceleration_multiplier() const noexcept { return 1.0; }
     virtual double gravity_scale()           const noexcept { return 1.0; }
+    virtual double drag_scale()              const noexcept { return 1.0; }
     virtual bool   can_jump()                const noexcept { return true; }
 
     virtual void update_velocity(vector3d& v, const vector3d& wish, const MovementContext& ctx, const MovementStats& stats, double dt) const {
@@ -125,13 +131,69 @@ public:
         const double accel = stats.ground_accel * acceleration_multiplier() * dt;
         v.x = approach(v.x, target.x, accel);
         v.y = approach(v.y, target.y, accel);
-
         const double vz = ctx.intent.jump ? m_rise : (ctx.intent.crouch ? -m_rise : -m_sink);
         v.z = approach(v.z, vz, m_vertical_accel * dt);
     }
 
 private:
     double m_rise, m_sink, m_vertical_accel;
+};
+
+class FlutterMode final : public MovementMode {
+public:
+    static constexpr double DEFAULT_DRAG        = 140.0;
+    static constexpr double DEFAULT_MIN_DROP    = 2.5;
+    static constexpr double DEFAULT_PROBE_DEPTH = 32.0;
+    static constexpr int    DEFAULT_PRIORITY    = 150;
+
+    explicit FlutterMode(double drag = DEFAULT_DRAG, double min_drop = DEFAULT_MIN_DROP,
+                         double probe_depth = DEFAULT_PROBE_DEPTH, double speed_multiplier = 1.0, int priority = DEFAULT_PRIORITY)
+        : MovementMode("voxelspire:flutter", priority, Poses::Standing, speed_multiplier),
+          m_drag(drag), m_min_drop(min_drop), m_probe(vmax(probe_depth, min_drop)) {}
+
+    bool is_active(const MovementContext& ctx) const override {
+        if (ctx.on_ground || ctx.in_fluid || ctx.vertical_velocity >= 0.0) return false;
+        if (ctx.fall_distance >= m_min_drop) return true;
+        const double remaining = ctx.ground_distance ? ctx.ground_distance(m_probe) : m_probe;
+        return ctx.fall_distance + remaining >= m_min_drop;
+    }
+
+    double drag_scale() const noexcept override { return m_drag; }
+    bool   can_jump()   const noexcept override { return false; }
+
+    double min_drop() const noexcept { return m_min_drop; }
+
+private:
+    double m_drag, m_min_drop, m_probe;
+};
+
+class FlyMode final : public MovementMode {
+public:
+    static constexpr double DEFAULT_SPEED_MULTIPLIER = 2.0;
+    static constexpr double DEFAULT_VERTICAL_SPEED   = 6.0;
+    static constexpr double DEFAULT_VERTICAL_ACCEL   = 30.0;
+    static constexpr int    DEFAULT_PRIORITY         = 350;
+
+    explicit FlyMode(double speed_multiplier = DEFAULT_SPEED_MULTIPLIER, double vertical_speed = DEFAULT_VERTICAL_SPEED,
+                     double vertical_accel = DEFAULT_VERTICAL_ACCEL, int priority = DEFAULT_PRIORITY)
+        : MovementMode("voxelspire:fly", priority, Poses::Standing, speed_multiplier),
+          m_vertical_speed(vertical_speed), m_vertical_accel(vertical_accel) {}
+
+    bool   is_active(const MovementContext& ctx) const override { return ctx.intent.fly && !ctx.in_fluid; }
+    double gravity_scale() const noexcept override { return 0.0; }
+    bool   can_jump()      const noexcept override { return false; }
+
+    void update_velocity(vector3d& v, const vector3d& wish, const MovementContext& ctx, const MovementStats& stats, double dt) const override {
+        const vector3d target = wish * (stats.speed * speed_multiplier());
+        const double accel = stats.air_accel * dt;
+        v.x = approach(v.x, target.x, accel);
+        v.y = approach(v.y, target.y, accel);
+        const double climb = (ctx.intent.jump ? 1.0 : 0.0) - (ctx.intent.crouch ? 1.0 : 0.0);
+        v.z = approach(v.z, climb * m_vertical_speed, m_vertical_accel * dt);
+    }
+
+private:
+    double m_vertical_speed, m_vertical_accel;
 };
 
 class MovementModeRegistry {

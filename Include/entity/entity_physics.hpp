@@ -10,20 +10,45 @@ namespace voxelspire {
 
 struct CollisionResult {
     bool hit_x = false, hit_y = false, hit_z = false;
-    bool landed = false;
+    bool   landed = false;
+    double landed_after_falling = 0.0;
 };
 
 class EntityPhysics {
 public:
-    explicit EntityPhysics(const WorldSettings& settings) noexcept : m_settings(settings) {}
+    explicit EntityPhysics(const WorldSettings& settings) : m_settings(settings.validated()) {}
 
     const WorldSettings& settings() const noexcept { return m_settings; }
 
-    void apply_gravity(Entity& e, double dt, double scale = 1.0) const noexcept {
-        if (scale == 0.0) return;
+    void apply_gravity(Entity& e, double dt, double gravity_scale = 1.0, double drag_scale = 1.0) const {
+        if (gravity_scale == 0.0) return;
+        const AirContext air = air_context(e, dt, gravity_scale, drag_scale);
         vector3d v = e.velocity();
-        v.z = vmax(v.z - m_settings.gravity * scale * dt, -m_settings.terminal_velocity);
+        v.z = m_settings.air_resistance->apply(v.z - air.gravity * dt, air);
         e.set_velocity(v);
+    }
+
+    AirContext air_context(const Entity& e, double dt, double gravity_scale = 1.0, double drag_scale = 1.0) const noexcept {
+        return { m_settings.gravity * gravity_scale, dt, m_settings.fall_height(), e.drag_factor() * vmax(drag_scale, 0.0) };
+    }
+
+    double terminal_velocity(const Entity& e, double gravity_scale = 1.0, double drag_scale = 1.0) const {
+        return m_settings.air_resistance->terminal_velocity(air_context(e, 0.0, gravity_scale, drag_scale));
+    }
+
+    double ground_distance(const Entity& e, const World& world, double max_depth) {
+        const AABB box = e.bounding_box();
+        const double feet = box.min.z;
+        gather(world, { { box.min.x, box.min.y, feet - max_depth }, { box.max.x, box.max.y, feet } });
+        double best = max_depth;
+
+        for (const AABB& b : m_boxes) {
+            if (!box.overlaps_on(0, b) || !box.overlaps_on(1, b)) continue;
+            if (b.max.z > feet + EPS) continue;
+            best = vmin(best, feet - b.max.z);
+        }
+
+        return vmax(best, 0.0);
     }
 
     bool collides(const World& world, const AABB& box) {
@@ -37,6 +62,8 @@ public:
         const double largest = vmax(std::fabs(delta.x), vmax(std::fabs(delta.y), std::fabs(delta.z)));
         const int steps = vmax(1, static_cast<int>(std::ceil(largest / MAX_STEP)));
         const vector3d d = delta / static_cast<double>(steps);
+
+        const double start_z = e.position().z;
 
         for (int i = 0; i < steps; ++i) {
             const double want_z = d.z;
@@ -52,6 +79,9 @@ public:
         if (r.hit_z) v.z = 0.0;
         e.set_velocity(v);
         e.set_on_ground(r.landed || (r.hit_z && delta.z < 0.0) || (delta.z == 0.0 && is_supported(e, world)));
+        const double fallen = e.fall_distance() + vmax(start_z - e.position().z, 0.0);
+        track_fall(e, e.position().z - start_z);
+        if (e.on_ground() && fallen > 0.0) r.landed_after_falling = fallen;
         return r;
     }
 
@@ -66,6 +96,11 @@ private:
     static constexpr double MAX_STEP     = 0.45;
     static constexpr double EPS          = 1e-7;
     static constexpr double GROUND_PROBE = 0.01;
+
+    static void track_fall(Entity& e, double moved_z) noexcept {
+        if (e.on_ground() || moved_z > 0.0) { e.set_fall_distance(0.0); return; }
+        e.set_fall_distance(e.fall_distance() - moved_z);
+    }
 
     double move_axis(Entity& e, const World& world, int axis, double d) {
         if (d == 0.0) return 0.0;
@@ -104,6 +139,7 @@ private:
         for (int z = z0; z <= z1; ++z)
         for (int x = x0; x <= x1; ++x) {
             const BlockPos p{ x, y, z };
+            if (!world.in_horizontal_bounds(p)) { m_boxes.push_back(AABB::unit_block(p)); continue; }
             const Block& b = world.block_at(p);
             if (b.is_solid()) m_boxes.push_back(b.collision_box(p));
         }

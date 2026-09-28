@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include "../fizmo.hpp"
 
 namespace voxelspire {
@@ -20,7 +21,13 @@ constexpr double PI = fizmo::constants::pi();
 constexpr double deg_to_rad(double d) noexcept { return d * fizmo::constants::pi_180(); }
 constexpr double rad_to_deg(double r) noexcept { return r * fizmo::constants::reciprocal_pi_180(); }
 
-inline int floor_to_int(double v) noexcept { return static_cast<int>(std::floor(v)); }
+inline int floor_to_int(double v) noexcept {
+    constexpr double lo = static_cast<double>(std::numeric_limits<int>::min());
+    constexpr double hi = static_cast<double>(std::numeric_limits<int>::max());
+    if (std::isnan(v)) return 0;
+    return static_cast<int>(vclamp(std::floor(v), lo, hi));
+}
+
 constexpr int floor_div(int a, int b) noexcept { return (a >= 0) ? a / b : -((-a + b - 1) / b); }
 constexpr int floor_mod(int a, int b) noexcept { return a - floor_div(a, b) * b; }
 

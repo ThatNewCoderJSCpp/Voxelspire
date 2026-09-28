@@ -9,9 +9,17 @@ namespace voxelspire {
 
 class GameCamera {
 public:
-    GameCamera(const CameraSettings& settings, unsigned int viewport_w, unsigned int viewport_h)
+    static constexpr double CHUNK_DIAGONAL = 1.7320508075688772;
+
+    GameCamera(const CameraSettings& settings, unsigned int viewport_w, unsigned int viewport_h, double view_distance)
         : m_settings(settings),
-          m_camera({}, viewport_w, viewport_h, settings.fov_y, settings.near_plane, settings.far_plane) {}
+          m_camera({}, viewport_w, viewport_h, settings.fov_y, settings.near_plane, far_plane_for(view_distance)) {}
+
+    void set_view_distance(double distance) noexcept { m_camera.set_clip_planes(m_settings.near_plane, far_plane_for(distance)); }
+
+    static double far_plane_for(double view_distance) noexcept {
+        return view_distance + static_cast<double>(EngineLimits::CHUNK_SIZE) * CHUNK_DIAGONAL;
+    }
 
     void add_rig(std::unique_ptr<CameraRig> rig) { m_rigs.push_back(std::move(rig)); }
 

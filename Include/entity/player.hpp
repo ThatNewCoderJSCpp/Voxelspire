@@ -30,6 +30,8 @@ public:
 
     double capsule_radius() const noexcept { return m_width * 0.5; }
 
+    bool despawns_in_void() const noexcept override { return false; }
+
     void set_intent(const MovementIntent& intent) noexcept { m_intent = intent; }
     const MovementIntent& intent() const noexcept { return m_intent; }
 
@@ -46,7 +48,9 @@ public:
         m_prev_eye_height = m_eye_height;
 
         const MovementContext mctx{ m_intent, ctx.world, m_on_ground, in_fluid(ctx.world),
-                                    [&](const std::string& pose) { return fits(ctx, pose); } };
+                                    [&](const std::string& pose) { return fits(ctx, pose); },
+                                    m_velocity.z, m_fall_distance,
+                                    [&](double max_depth) { return ctx.physics.ground_distance(*this, ctx.world, max_depth); } };
 
         m_mode = m_modes->select(mctx);
         if (!m_mode) return;
@@ -59,7 +63,7 @@ public:
         m_mode->update_velocity(v, wish, mctx, stats, ctx.dt);
         if (v.z > 0.0 && m_on_ground) m_on_ground = false;
         m_velocity = v;
-        ctx.physics.apply_gravity(*this, ctx.dt, stats.gravity_scale * m_mode->gravity_scale());
+        ctx.physics.apply_gravity(*this, ctx.dt, effective_gravity_scale(), effective_drag_scale());
         ctx.physics.move(*this, ctx.world, m_velocity * ctx.dt);
         const double target_eye = m_body.get(m_pose).eye_height;
         m_eye_height += (target_eye - m_eye_height) * vmin(1.0, EYE_SMOOTHING * ctx.dt);
@@ -73,7 +77,16 @@ public:
         s.air_accel     = m_attributes.value(Attributes::AirAcceleration);
         s.jump_velocity = m_attributes.value(Attributes::JumpVelocity);
         s.gravity_scale = m_attributes.value(Attributes::GravityScale);
+        s.drag_scale    = m_attributes.value(Attributes::DragScale);
         return s;
+    }
+
+    double effective_gravity_scale() const {
+        return m_attributes.value(Attributes::GravityScale) * (m_mode ? m_mode->gravity_scale() : 1.0);
+    }
+
+    double effective_drag_scale() const {
+        return m_attributes.value(Attributes::DragScale) * (m_mode ? m_mode->drag_scale() : 1.0);
     }
 
 private:

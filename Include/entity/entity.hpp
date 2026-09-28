@@ -2,17 +2,30 @@
 #define VOXELSPIRE_ENTITY_ENTITY_HPP
 
 #include <cmath>
+#include <cstdint>
 #include "../core/types.hpp"
+#include "../physics/aerodynamics.hpp"
 
 namespace voxelspire {
 
 class World;
 class EntityPhysics;
+class EntityManager;
+
+using EntityId = std::uint64_t;
+constexpr EntityId NO_ENTITY = 0;
 
 struct TickContext {
     World&         world;
     EntityPhysics& physics;
+    EntityManager& entities;
     double         dt;
+};
+
+struct EntityCollision {
+    bool   collides_with_entities = true;
+    bool   pushable               = true;
+    double push_weight            = 1.0;
 };
 
 class Entity {
@@ -21,6 +34,21 @@ public:
     virtual ~Entity() = default;
 
     virtual void tick(TickContext& ctx) = 0;
+    virtual void on_touch(Entity&, TickContext&) {}
+    virtual bool despawns_in_void() const noexcept { return true; }
+
+    EntityId id()      const noexcept { return m_id; }
+    bool     removed() const noexcept { return m_removed; }
+
+    const EntityCollision& collision() const noexcept { return m_collision; }
+    void set_collision(const EntityCollision& c) noexcept { m_collision = c; }
+
+    const Aerodynamics& aerodynamics() const noexcept { return m_aerodynamics; }
+    void set_aerodynamics(const Aerodynamics& a) noexcept { m_aerodynamics = a; }
+    double drag_factor() const noexcept { return m_aerodynamics.drag_factor(m_height); }
+
+    double fall_distance() const noexcept { return m_fall_distance; }
+    void set_fall_distance(double d) noexcept { m_fall_distance = vmax(d, 0.0); }
 
     static constexpr double MAX_PITCH = 89.9;
 
@@ -71,6 +99,9 @@ public:
     vector3d flat_right()   const noexcept { const double y = deg_to_rad(m_yaw); return {  std::cos(y), std::sin(y), 0.0 }; }
 
 protected:
+    EntityCollision m_collision;
+    Aerodynamics    m_aerodynamics;
+    double          m_fall_distance = 0.0;
     vector3d m_position{};
     vector3d m_prev_position{};
     vector3d m_velocity{};
@@ -79,6 +110,11 @@ protected:
     bool     m_on_ground   = false;
     double   m_yaw         = 0.0;
     double   m_pitch       = 0.0;
+
+private:
+    friend class EntityManager;
+    EntityId m_id      = NO_ENTITY;
+    bool     m_removed = false;
 };
 
 } // namespace voxelspire

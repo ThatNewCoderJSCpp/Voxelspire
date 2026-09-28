@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 #include "../core/types.hpp"
+#include "player_defaults.hpp"
 
 namespace voxelspire {
 
@@ -34,11 +35,22 @@ namespace Attributes {
     inline const std::string GroundAcceleration = "voxelspire:ground_acceleration";
     inline const std::string AirAcceleration    = "voxelspire:air_acceleration";
     inline const std::string GravityScale       = "voxelspire:gravity_scale";
+    inline const std::string DragScale          = "voxelspire:drag_scale";
     inline const std::string BlockReach         = "voxelspire:block_reach";
 } // namespace Attributes
 
 class AttributeRegistry {
 public:
+    struct defaults {
+        static constexpr double movement_speed_max      = 1024.0;
+        static constexpr double jump_velocity_max       = 1024.0;
+        static constexpr double ground_acceleration_max = 4096.0;
+        static constexpr double air_acceleration_max    = 4096.0;
+        static constexpr double gravity_scale_max       =   16.0;
+        static constexpr double drag_scale_max          = 1024.0;
+        static constexpr double reach_max               =   64.0;
+    };
+
     const Attribute& add(std::string id, double default_value, double min_value, double max_value) {
         if (m_by_id.count(id)) throw std::runtime_error("attribute already registered: " + id);
         auto attr = std::make_unique<Attribute>(id, default_value, min_value, max_value);
@@ -61,12 +73,13 @@ public:
     void for_each(Fn&& fn) const { for (const auto& kv : m_by_id) fn(*kv.second); }
 
     static void register_defaults(AttributeRegistry& r) {
-        r.add(Attributes::MovementSpeed,      5.00,  0.0, 1024.0);
-        r.add(Attributes::JumpVelocity,       9.75,  0.0, 1024.0);
-        r.add(Attributes::GroundAcceleration, 60.0,  0.0, 4096.0);
-        r.add(Attributes::AirAcceleration,    12.0,  0.0, 4096.0);
-        r.add(Attributes::GravityScale,       1.0,  -16.0,  16.0);
-        r.add(Attributes::BlockReach,         5.0,   0.0,   64.0);
+        r.add(Attributes::MovementSpeed,      PlayerDefaults::movement::movement_speed,      0.0, defaults::movement_speed_max);
+        r.add(Attributes::JumpVelocity,       PlayerDefaults::movement::jump_velocity,       0.0, defaults::jump_velocity_max);
+        r.add(Attributes::GroundAcceleration, PlayerDefaults::movement::ground_acceleration, 0.0, defaults::ground_acceleration_max);
+        r.add(Attributes::AirAcceleration,    PlayerDefaults::movement::air_acceleration,    0.0, defaults::air_acceleration_max);
+        r.add(Attributes::BlockReach,         PlayerDefaults::reach,                         0.0, defaults::reach_max);
+        r.add(Attributes::GravityScale,       1.0,  -defaults::gravity_scale_max,                 defaults::gravity_scale_max);
+        r.add(Attributes::DragScale,          1.0,  0.0,                                          defaults::drag_scale_max);
     }
 
 private:
