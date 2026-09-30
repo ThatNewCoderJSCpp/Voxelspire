@@ -17,6 +17,12 @@ public:
 
     void set_view_distance(double distance) noexcept { m_camera.set_clip_planes(m_settings.near_plane, far_plane_for(distance)); }
 
+    void set_settings(const CameraSettings& settings, double view_distance) noexcept {
+        m_settings = settings;
+        m_camera.set_fov_y(settings.fov_y);
+        set_view_distance(view_distance);
+    }
+
     static double far_plane_for(double view_distance) noexcept {
         return view_distance + static_cast<double>(EngineLimits::CHUNK_SIZE) * CHUNK_DIAGONAL;
     }
@@ -36,7 +42,6 @@ public:
         if (m_rigs.empty()) return;
         const vector3d before = m_camera.position();
         m_rigs[m_active]->apply(m_camera, CameraRigContext{ player, world, m_settings, alpha });
-
         const vector3d now = m_camera.position();
         if (m_has_previous && frame_dt > 0.0) m_velocity = (now - before) / frame_dt;
         m_has_previous = true;

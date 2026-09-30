@@ -2,6 +2,7 @@
 #define VOXELSPIRE_LIGHTING_SUN_PATH_HPP
 
 #include <cmath>
+#include "../sky/settings.hpp"
 #include "settings.hpp"
 
 namespace voxelspire {
@@ -20,6 +21,7 @@ struct SkyState {
     vector3d sun_position    { 0.0, 0.0, 1.0 };
     vector3d moon_position   { 0.0, 0.0, -1.0 };
     double   night           = 0.0;
+    double   dusk            = 0.0;
     bool     moon            = false;
 };
 
@@ -45,7 +47,7 @@ public:
     static constexpr double SUNRISE = 0.25;
     static constexpr double FULL_TURN = 2.0 * PI;
 
-    explicit DefaultSunPath(const DayCycleSettings& settings) : m_settings(settings) {}
+    DefaultSunPath(const DayCycleSettings& settings, const CelestialSettings& bodies) : m_settings(settings), m_bodies(bodies) {}
 
     SkyState evaluate(double time_of_day) const override {
         const DayCycleSettings& s = m_settings;
@@ -68,37 +70,43 @@ public:
         out.sun_position = sun;
         out.moon_position = sun * -1.0;
         out.night = 1.0 - day;
+        out.dusk = dusk;
 
-        if (sun_up >= moon_up * s.moon_strength) {
+        const SunSettings& b = m_bodies.sun;
+        const MoonSettings& m = m_bodies.moon;
+        const double sun_light = b.emits_light ? sun_up * b.light_strength : 0.0;
+        const double moon_light = m.emits_light ? moon_up * m.light_strength : 0.0;
+
+        if (sun_light >= moon_light) {
             out.light_direction = sun * -1.0;
-            out.light_color     = mix_color(s.sun_color, s.dusk_sun_color, dusk);
-            out.light_strength  = sun_up;
+            out.light_color     = mix_color(b.light_color, b.dusk_light_color, dusk);
+            out.light_strength  = sun_light;
             out.moon            = false;
         } else {
             out.light_direction = sun;
-            out.light_color     = s.moon_color;
-            out.light_strength  = moon_up * s.moon_strength;
+            out.light_color     = m.light_color;
+            out.light_strength  = moon_light;
             out.moon            = true;
         }
 
         return out;
     }
 
-    const DayCycleSettings& settings() const noexcept { return m_settings; }
+    const DayCycleSettings&  settings() const noexcept { return m_settings; }
+    const CelestialSettings& bodies()   const noexcept { return m_bodies; }
 
 private:
-    DayCycleSettings m_settings;
+    DayCycleSettings  m_settings;
+    CelestialSettings m_bodies;
 };
 
 class WorldClock {
 public:
-    static constexpr double HOURS_PER_DAY = 24.0;
-
     explicit WorldClock(double start_time = 0.3) noexcept { set_time(start_time); }
 
-    void advance(double seconds, const DayCycleSettings& s) noexcept {
-        if (!s.enabled || s.day_length <= 0.0) return;
-        add(seconds / s.day_length);
+    void advance_ticks(double ticks, const DayCycleSettings& s) noexcept {
+        if (!s.enabled || s.ticks_per_day <= 0.0) return;
+        add(ticks / s.ticks_per_day);
     }
 
     void add(double days) noexcept {
@@ -112,7 +120,7 @@ public:
 
     double       time() const noexcept { return m_time; }
     std::int64_t day()  const noexcept { return m_day; }
-    double       hours() const noexcept { return m_time * HOURS_PER_DAY; }
+    double       hours(double hours_per_day) const noexcept { return m_time * hours_per_day; }
 
 private:
     double       m_time = 0.0;

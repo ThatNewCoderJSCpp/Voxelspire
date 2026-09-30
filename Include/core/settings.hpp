@@ -7,10 +7,12 @@
 #include <string>
 #include <vector>
 #include "types.hpp"
+#include "../entity/character_settings.hpp"
+#include "../input/input_bindings.hpp"
 #include "../lighting/dynamic_light.hpp"
 #include "../lighting/settings.hpp"
-#include "../physics/air_resistance.hpp"
-#include "../physics/fluid_resistance.hpp"
+#include "../physics/settings.hpp"
+#include "../sky/settings.hpp"
 #include "../world/showcase.hpp"
 #include "../world/world_feature.hpp"
 
@@ -120,7 +122,25 @@ struct ControlSettings {
 
 struct SimulationSettings {
     double tick_rate           = 60.0;
+    double game_speed          = 1.0;
     int    max_ticks_per_frame = 10;
+};
+
+struct MenuSettings {
+    bool        pause_game    = true;
+    bool        save_on_close = true;
+    double      scale         = 1.0;
+    std::string file          = "voxelspire_settings.cfg";
+    Color       backdrop      { 0, 0, 0, 150 };
+    Color       panel         { 20, 23, 31, 245 };
+    Color       sidebar       { 14, 16, 22, 255 };
+    Color       row_hover     { 255, 255, 255, 14 };
+    Color       text          { 232, 236, 244 };
+    Color       muted         { 140, 150, 168 };
+    Color       accent        { 92, 164, 255 };
+    Color       toggle_on     { 64, 186, 104 };
+    Color       control       { 42, 47, 60 };
+    Color       danger        { 214, 88, 88 };
 };
 
 struct StreamingSettings {
@@ -228,11 +248,16 @@ struct EntitySettings {
 
 struct GameSettings {
     WorldSettings      world;
+    PhysicsSettings    physics;
+    CharacterSettings  character;
+    InputBindings      bindings = InputBindings::defaults();
+    MenuSettings       menu;
     FlatWorldPreset    flat_world;
     StreamingSettings  streaming;
     LodSettings        lod;
     LightingSettings   lighting;
     DayCycleSettings   day_cycle;
+    CelestialSettings  celestial;
     DynamicLight       hand_light = DynamicLight::glow(Color(255, 190, 120), 11.0, true);
     ParticleSettings   particles;
     CameraSettings     camera;

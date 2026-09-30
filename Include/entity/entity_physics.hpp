@@ -19,6 +19,7 @@ public:
     explicit EntityPhysics(const WorldSettings& settings) : m_settings(settings.validated()) {}
 
     const WorldSettings& settings() const noexcept { return m_settings; }
+    void set_settings(const WorldSettings& settings) { m_settings = settings.validated(); }
 
     void apply_gravity(Entity& e, double dt, double gravity_scale = 1.0, double drag_scale = 1.0) const {
         if (gravity_scale == 0.0) return;
@@ -141,6 +142,7 @@ private:
         if (d == 0.0) return 0.0;
         const AABB box = e.bounding_box();
         double allowed = d;
+        
         for (const AABB& b : m_boxes) {
             bool overlaps_others = true;
             for (int o = 0; o < 3; ++o) if (o != axis && !box.overlaps_on(o, b)) overlaps_others = false;

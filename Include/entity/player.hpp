@@ -21,7 +21,15 @@ public:
     const EntityBody&   body()       const noexcept { return m_body; }
 
     const MovementMode* movement_mode() const noexcept { return m_mode; }
-    Identifier          pose()          const noexcept { return m_pose; }
+
+    void forget_movement_mode() noexcept { m_mode = nullptr; }
+
+    void set_body(EntityBody body) {
+        m_body = std::move(body);
+        apply_pose(m_body.has(m_pose) ? m_pose : Poses::Standing);
+    }
+
+    Identifier pose() const noexcept { return m_pose; }
 
     double eye_height() const noexcept { return m_eye_height; }
     double eye_height(double alpha) const noexcept { return m_prev_eye_height + (m_eye_height - m_prev_eye_height) * alpha; }
@@ -64,11 +72,22 @@ public:
     void tick(TickContext& ctx) override {
         begin_tick();
         m_prev_eye_height = m_eye_height;
-
         auto fits_pose = [&](Identifier pose) { return fits(ctx, pose); };
         auto ground    = [&](double max_depth) { return ctx.physics.ground_distance(*this, ctx.world, max_depth); };
-        const MovementContext mctx{ m_intent, ctx.world, m_on_ground, in_fluid(ctx.world), fits_pose, m_velocity.z, m_fall_distance, ground,
-                                    head_in_fluid(ctx.world), look_direction(), flat_right() };
+        
+        const MovementContext mctx{ 
+            m_intent, 
+            ctx.world, 
+            m_on_ground, 
+            in_fluid(ctx.world), 
+            fits_pose, 
+            m_velocity.z, 
+            m_fall_distance, 
+            ground,
+            head_in_fluid(ctx.world), 
+            look_direction(), 
+            flat_right() 
+        };
 
         m_mode = m_modes->select(mctx);
         if (!m_mode) return;
@@ -78,8 +97,14 @@ public:
         if (len > 1.0) wish = wish / len;
         const MovementStats stats = movement_stats();
         const double submerged = ctx.physics.submerged_fraction(*this, ctx.world);
-        ctx.physics.apply_fluid(*this, submerged, stats.speed * m_mode->speed_multiplier(m_intent), m_mode->rising_speed_limit(stats, m_intent),
-                                m_mode->sinking_speed_limit(stats, m_intent), ctx.dt);
+        
+        ctx.physics.apply_fluid(
+            *this, submerged, stats.speed * m_mode->speed_multiplier(m_intent), 
+            m_mode->rising_speed_limit(stats, m_intent),
+            m_mode->sinking_speed_limit(stats, m_intent), 
+            ctx.dt
+        );
+
         vector3d v = m_velocity;
         m_mode->update_velocity(v, wish, mctx, stats, ctx.dt);
         if (v.z > 0.0 && m_on_ground) m_on_ground = false;

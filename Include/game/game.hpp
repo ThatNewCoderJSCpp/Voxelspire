@@ -21,6 +21,10 @@
 #include "../render/hud.hpp"
 #include "../render/reflection_planes.hpp"
 #include "../render/world_renderer.hpp"
+#include "../sky/renderer.hpp"
+#include "../ui/settings_file.hpp"
+#include "../ui/settings_menu.hpp"
+#include "../ui/settings_pages.hpp"
 #include "../world/chunk_streamer.hpp"
 #include "../world/world_generator.hpp"
 
@@ -30,9 +34,10 @@ class Game {
 public:
     explicit Game(const GameSettings& settings = GameSettings{})
         : m_settings(with_seed(settings)),
+          m_default_settings(m_settings),
           m_block_ids(DefaultBlocks::register_all(m_registry, settings.render.block_color_variation)),
           m_attributes(make_attributes()),
-          m_movement_modes(make_movement_modes()),
+          m_movement_modes(make_movement_modes(settings.character)),
           m_particle_types(make_particle_types()),
           m_world(m_registry, m_settings.world),
           m_generator(std::make_unique<FlatWorldGenerator>(m_settings.flat_world, m_registry, m_settings.world.seed)),
@@ -44,17 +49,18 @@ public:
           m_entities(settings.entities),
           m_player(&m_entities.spawn<Player>(m_attributes, m_movement_modes)),
           m_camera(settings.camera, 1, 1, settings.render.render_distance),
-          m_bindings(InputBindings::defaults()),
           m_clock(settings.day_cycle.start_time),
-          m_sun_path(std::make_unique<DefaultSunPath>(settings.day_cycle)),
-          m_capsule(settings.render.capsule_segments, settings.render.capsule_rings,
-                    settings.render.player_color, settings.render.player_visor) {
+          m_sun_path(std::make_unique<DefaultSunPath>(m_settings.day_cycle, m_settings.celestial)),
+          m_capsule(make_capsule(settings.render)) {
         m_world.attach_lighting(make_light_engine(m_world, m_settings.world.light_format));
         m_lighting.configure(m_settings.lighting);
+        m_celestial.configure(m_settings.celestial);
         m_terrain.configure(m_settings.render, m_settings.streaming, m_settings.lod, m_settings.lighting);
         m_camera.add_rig(std::make_unique<FirstPersonRig>());
         m_camera.add_rig(std::make_unique<ThirdPersonBackRig>());
         m_camera.add_rig(std::make_unique<ThirdPersonFrontRig>());
+        apply_character();
+        apply_physics();
     }
 
     ~Game() { m_jobs.shutdown(); }
@@ -74,6 +80,8 @@ public:
         m_viewport_w = viewport_w;
         m_viewport_h = viewport_h;
         m_camera.update(*m_player, m_world, 1.0, 0.0);
+        build_menu();
+        apply_settings(SettingsFile::load(m_menu.tabs(), m_settings.menu.file));
     }
 
     void shutdown() noexcept { if (m_cursor) m_cursor->unlock(); }
@@ -82,12 +90,14 @@ public:
 
     void handle_event(const fizmo::windows::WindowEvent& e) {
         using fizmo::windows::WindowEventType;
+        if (m_menu.on_event(e)) { if (e.type == WindowEventType::KeyPress) m_key_consumed = true; return; }
+
         switch (e.type) {
             case WindowEventType::WindowResize:
                 if (e.x > 0 && e.y > 0) { m_viewport_w = e.x; m_viewport_h = e.y; m_camera.set_viewport(e.x, e.y); }
                 break;
             case WindowEventType::MouseClick:
-                if (m_cursor && !m_cursor->locked()) m_cursor->lock();
+                if (m_cursor && !m_cursor->locked() && !m_menu.is_open()) lock_cursor();
                 break;
             case WindowEventType::KeyPress:
                 m_last_key = e.key_name;
@@ -99,39 +109,34 @@ public:
     void update(double frame_dt, const fizmo::windows::InputManager& input) {
         m_frame_dt = frame_dt;
         m_seconds += frame_dt;
-        if (mouse_locked()) {
-            const double sens = m_settings.controls.mouse_sensitivity;
-            const double invert = m_settings.controls.invert_y ? -1.0 : 1.0;
-            m_player->add_look(-input.mouse_delta_x() * sens, -input.mouse_delta_y() * sens * invert);
+        const InputBindings& keys = m_settings.bindings;
+        if (keys.just_pressed(input, Action::OpenMenu) && !m_key_consumed) toggle_menu();
+        m_key_consumed = false;
+
+        if (m_menu.is_open()) {
+            m_menu.update(input);
+            apply_settings(m_menu.take_changes());
+            if (m_menu.take_close_request()) close_menu();
         }
 
-        if (m_bindings.just_pressed(input, Action::CycleCamera))  m_camera.cycle_rig();
-        if (m_bindings.just_pressed(input, Action::ReleaseMouse) && m_cursor) m_cursor->unlock();
-        if (m_bindings.just_pressed(input, Action::ToggleHud))    m_settings.hud.show_debug = !m_settings.hud.show_debug;
-        if (m_bindings.just_pressed(input, Action::CycleHudCorner)) m_settings.hud.corner = Hud::next_corner(m_settings.hud.corner);
-        if (m_bindings.just_pressed(input, Action::HudLarger))  m_settings.hud.scale = Hud::stepped_scale(m_settings.hud.scale, 1);
-        if (m_bindings.just_pressed(input, Action::HudSmaller)) m_settings.hud.scale = Hud::stepped_scale(m_settings.hud.scale, -1);
-        if (m_bindings.just_pressed(input, Action::Respawn))      respawn_player();
-        if (m_bindings.just_pressed(input, Action::RenderDistanceUp))   set_render_distance(m_settings.render.render_distance + m_settings.render.render_distance_step);
-        if (m_bindings.just_pressed(input, Action::RenderDistanceDown)) set_render_distance(m_settings.render.render_distance - m_settings.render.render_distance_step);
-        if (m_bindings.just_pressed(input, Action::CycleLighting))   cycle_lighting();
-        if (m_bindings.just_pressed(input, Action::ToggleHandLight)) toggle_hand_light();
-        if (m_bindings.just_pressed(input, Action::TimeForward))     m_clock.add(TIME_STEP_DAYS);
-        if (m_bindings.just_pressed(input, Action::TimeBackward))    m_clock.add(-TIME_STEP_DAYS);
-        if (m_bindings.just_pressed(input, Action::ToggleDayCycle))  m_settings.day_cycle.enabled = !m_settings.day_cycle.enabled;
-        m_clock.advance(frame_dt, m_settings.day_cycle);
+        const bool playing = !m_menu.is_open();
+        if (playing) handle_game_keys(input);
         MovementIntent intent;
-        intent.forward = (m_bindings.is_down(input, Action::MoveForward) ? 1.0 : 0.0) - (m_bindings.is_down(input, Action::MoveBack) ? 1.0 : 0.0);
-        intent.strafe  = (m_bindings.is_down(input, Action::MoveRight) ? 1.0 : 0.0) - (m_bindings.is_down(input, Action::MoveLeft) ? 1.0 : 0.0);
-        if (m_bindings.just_pressed(input, Action::Jump)) m_jump_latch = true;
-        intent.jump    = m_bindings.is_down(input, Action::Jump) || m_jump_latch;
-        intent.sprint  = m_bindings.is_down(input, Action::Sprint);
-        intent.crouch  = m_bindings.is_down(input, Action::Crouch);
-        intent.crawl   = m_bindings.is_down(input, Action::Crawl);
-        intent.swim    = m_bindings.is_down(input, Action::Swim);
-        intent.alt     = m_bindings.is_down(input, Action::Alt);
+
+        if (playing) {
+            intent.forward = (keys.is_down(input, Action::MoveForward) ? 1.0 : 0.0) - (keys.is_down(input, Action::MoveBack) ? 1.0 : 0.0);
+            intent.strafe  = (keys.is_down(input, Action::MoveRight) ? 1.0 : 0.0) - (keys.is_down(input, Action::MoveLeft) ? 1.0 : 0.0);
+            if (keys.just_pressed(input, Action::Jump)) m_jump_latch = true;
+            intent.jump    = keys.is_down(input, Action::Jump) || m_jump_latch;
+            intent.sprint  = keys.is_down(input, Action::Sprint);
+            intent.crouch  = keys.is_down(input, Action::Crouch);
+            intent.crawl   = keys.is_down(input, Action::Crawl);
+            intent.swim    = keys.is_down(input, Action::Swim);
+            intent.alt     = keys.is_down(input, Action::Alt);
+        }
+
         m_player->set_intent(intent);
-        advance(frame_dt);
+        if (playing || !m_settings.menu.pause_game) advance(frame_dt * vmax(m_settings.simulation.game_speed, 0.0));
         ensure_player_terrain();
         update_streaming(false);
         m_streamer.update(m_settings.streaming.max_column_jobs);
@@ -156,6 +161,7 @@ public:
         renderer.set_scene_lighting(m_lighting.build(m_sky, m_world, eye, m_frame_lights, m_seconds, submerged ? &medium : nullptr));
         renderer.begin_3d(m_camera.camera());
         renderer.set_light_3d(fizmo::graphics::Light3D::sun(LEGACY_SUN));
+        m_celestial.render(renderer, celestial_view(eye, submerged));
         WorldRenderOptions options;
         options.render_distance = m_settings.render.render_distance;
         options.cave_culling    = m_settings.render.cave_culling;
@@ -171,10 +177,65 @@ public:
             const auto view = third_person ? fizmo::graphics::View3D::Everywhere : fizmo::graphics::View3D::ReflectionsOnly;
             m_capsule.render(renderer, *m_player, m_alpha, m_lighting.render_light_at(m_world, m_player->interpolated_position(m_alpha) + vector3d{ 0.0, 0.0, m_player->height() * 0.5 }), view);
         }
-        if (m_target) m_outline.render(renderer, m_world, *m_target, m_settings.render);
+        if (m_target && !m_menu.is_open()) m_outline.render(renderer, m_world, *m_target, m_settings.render);
         renderer.end_3d();
+
+        if (m_menu.is_open()) {
+            m_menu.render(renderer, m_viewport_w, m_viewport_h, m_settings.menu);
+            return;
+        }
+
         if (m_hud.due(m_frame_dt, m_settings.hud)) m_hud.set_info(hud_info(fps_average), m_settings.hud);
         m_hud.render(renderer, m_viewport_w, m_viewport_h, m_settings.hud);
+    }
+
+    void open_menu() {
+        if (m_menu.is_open()) return;
+        m_menu.open();
+        if (m_cursor) m_cursor->unlock();
+    }
+
+    void close_menu() {
+        if (!m_menu.is_open()) return;
+        m_menu.close();
+        if (m_settings.menu.save_on_close) save_settings();
+        lock_cursor();
+    }
+
+    void lock_cursor() {
+        if (!m_cursor) return;
+        m_cursor->lock();
+        m_ignore_look = LOOK_SETTLE_FRAMES;
+    }
+
+    void toggle_menu() { if (m_menu.is_open()) close_menu(); else open_menu(); }
+    bool menu_open() const noexcept { return m_menu.is_open(); }
+    SettingsMenu& menu() noexcept { return m_menu; }
+
+    bool save_settings() { return SettingsFile::save(m_menu.tabs(), m_settings.menu.file); }
+
+    bool take_display_change() noexcept { const bool d = m_display_dirty; m_display_dirty = false; return d; }
+
+    void apply_settings(std::uint32_t groups) {
+        if (groups == Apply::Nothing) return;
+        if (groups & Apply::Display)     m_display_dirty = true;
+        if (groups & Apply::Camera)      m_camera.set_settings(m_settings.camera, m_settings.render.render_distance);
+        if (groups & Apply::Character)   apply_character();
+        if (groups & Apply::Physics)     apply_physics();
+        if (groups & Apply::Celestial)   m_celestial.configure(m_settings.celestial);
+        if (groups & (Apply::Sky | Apply::Celestial)) m_sun_path = std::make_unique<DefaultSunPath>(m_settings.day_cycle, m_settings.celestial);
+        if (groups & Apply::LightFormat) apply_light_format();
+        if (groups & Apply::Lighting)    set_lighting(m_settings.lighting);
+        if (groups & (Apply::Terrain | Apply::Streaming)) m_terrain.configure(m_settings.render, m_settings.streaming, m_settings.lod, m_settings.lighting);
+        if (groups & Apply::Streaming)   set_render_distance(m_settings.render.render_distance);
+        if (groups & Apply::Particles)   m_particles.settings() = m_settings.particles;
+        if (groups & Apply::Entities)    m_entities.settings() = m_settings.entities;
+        if (groups & Apply::Player)      m_capsule = make_capsule(m_settings.render);
+
+        if ((groups & Apply::HandLight) && m_player->has_hand_light()) {
+            const DynamicLight light = m_settings.hand_light;
+            m_player->set_hand_light(&light);
+        }
     }
 
     HudInfo hud_info(double fps_average) const {
@@ -203,7 +264,7 @@ public:
         info.seed                = m_settings.world.seed;
         info.light               = m_world.lighting() ? m_world.lighting()->stats() : LightStats{};
         info.lighting_preset     = m_settings.lighting.name;
-        info.time_hours          = m_clock.hours();
+        info.time_hours          = m_clock.hours(m_settings.day_cycle.hours_per_day);
         info.day                 = m_clock.day();
         info.day_cycle           = m_settings.day_cycle.enabled;
         info.light_here          = light_level_at(m_player->eye_position(m_alpha));
@@ -237,6 +298,7 @@ public:
     }
 
     void set_sun_path(std::unique_ptr<SunPath> path) { if (path) m_sun_path = std::move(path); }
+    CelestialRenderer& celestial() noexcept { return m_celestial; }
     const SunPath& sun_path() const noexcept { return *m_sun_path; }
     WorldClock&    clock()          noexcept { return m_clock; }
     const SkyState& sky()     const noexcept { return m_sky; }
@@ -294,6 +356,89 @@ public:
     }
 
 private:
+    CelestialView celestial_view(const vector3d& eye, bool submerged) const {
+        CelestialView view;
+        view.eye        = eye;
+        view.far_plane  = m_camera.camera().far_plane();
+        view.sky        = m_sky;
+        view.orbit_axis = CelestialRenderer::orbit_axis(*m_sun_path);
+        view.days       = static_cast<double>(m_clock.day()) + m_clock.time();
+        view.seconds    = m_seconds;
+        view.submerged  = submerged;
+        return view;
+    }
+
+    void handle_game_keys(const fizmo::windows::InputManager& input) {
+        const InputBindings& keys = m_settings.bindings;
+
+        if (m_ignore_look > 0) {
+            --m_ignore_look;
+        } else if (mouse_locked()) {
+            const double sens = m_settings.controls.mouse_sensitivity;
+            const double invert = m_settings.controls.invert_y ? -1.0 : 1.0;
+            m_player->add_look(-input.mouse_delta_x() * sens, -input.mouse_delta_y() * sens * invert);
+        }
+
+        const double hour = 1.0 / vmax(m_settings.day_cycle.hours_per_day, 1.0);
+        if (keys.just_pressed(input, Action::CycleCamera))        m_camera.cycle_rig();
+        if (keys.just_pressed(input, Action::ToggleHud))          m_settings.hud.show_debug = !m_settings.hud.show_debug;
+        if (keys.just_pressed(input, Action::CycleHudCorner))     m_settings.hud.corner = Hud::next_corner(m_settings.hud.corner);
+        if (keys.just_pressed(input, Action::HudLarger))          m_settings.hud.scale = Hud::stepped_scale(m_settings.hud.scale, 1);
+        if (keys.just_pressed(input, Action::HudSmaller))         m_settings.hud.scale = Hud::stepped_scale(m_settings.hud.scale, -1);
+        if (keys.just_pressed(input, Action::Respawn))            respawn_player();
+        if (keys.just_pressed(input, Action::RenderDistanceUp))   set_render_distance(m_settings.render.render_distance + m_settings.render.render_distance_step);
+        if (keys.just_pressed(input, Action::RenderDistanceDown)) set_render_distance(m_settings.render.render_distance - m_settings.render.render_distance_step);
+        if (keys.just_pressed(input, Action::CycleLighting))      cycle_lighting();
+        if (keys.just_pressed(input, Action::ToggleHandLight))    toggle_hand_light();
+        if (keys.just_pressed(input, Action::TimeForward))        m_clock.add(hour);
+        if (keys.just_pressed(input, Action::TimeBackward))       m_clock.add(-hour);
+        if (keys.just_pressed(input, Action::ToggleDayCycle))     m_settings.day_cycle.enabled = !m_settings.day_cycle.enabled;
+    }
+
+    void build_menu() {
+        SettingsHooks hooks;
+        hooks.hour     = [this] { return m_clock.hours(m_settings.day_cycle.hours_per_day); };
+        hooks.set_hour = [this](double h) { m_clock.set_time(h / vmax(m_settings.day_cycle.hours_per_day, 1.0)); };
+        hooks.save     = [this] { save_settings(); };
+        hooks.reload   = [this] { apply_settings(SettingsFile::load(m_menu.tabs(), m_settings.menu.file)); };
+        hooks.respawn  = [this] { respawn_player(); };
+        m_menu.set_tabs(SettingsPages::build(m_settings, m_default_settings, hooks));
+    }
+
+    void apply_character() {
+        const CharacterSettings& c = m_settings.character;
+        m_player->set_body(c.body());
+        AttributeMap& a = m_player->attributes();
+        a.set_base(Attributes::MovementSpeed, c.walk_speed);
+        a.set_base(Attributes::JumpVelocity, c.jump_velocity);
+        a.set_base(Attributes::GroundAcceleration, c.ground_acceleration);
+        a.set_base(Attributes::AirAcceleration, c.air_acceleration);
+        a.set_base(Attributes::BlockReach, c.reach);
+        MovementModeRegistry::register_defaults(m_movement_modes, c);
+        m_player->forget_movement_mode();
+    }
+
+    void apply_physics() {
+        WorldSettings w = m_world.settings();
+        w.gravity          = m_settings.world.gravity;
+        w.air_resistance   = m_settings.physics.air_resistance(w.gravity, m_settings.world.air_resistance);
+        w.fluid_resistance = m_settings.physics.fluid_resistance(m_settings.world.fluid_resistance);
+        w.fluid_buoyancy   = m_settings.world.fluid_buoyancy;
+        w.fluid_sink_speed = m_settings.world.fluid_sink_speed;
+        m_world.set_physics(w);
+        m_physics.set_settings(m_world.settings());
+    }
+
+    void apply_light_format() {
+        if (m_world.light_format() == m_settings.world.light_format) return;
+        m_world.attach_lighting(make_light_engine(m_world, m_settings.world.light_format));
+        m_terrain.remesh_all();
+    }
+
+    static CapsuleRenderer make_capsule(const RenderSettings& r) {
+        return CapsuleRenderer(r.capsule_segments, r.capsule_rings, r.player_color, r.player_visor);
+    }
+
     void respawn_player() {
         m_streamer.load_now(columns_around(m_generator->spawn_column(), 1));
         m_player->respawn(m_generator->spawn_point(m_world));
@@ -366,13 +511,14 @@ private:
         m_simulation.world  = &m_world;
         TickContext ctx{ m_world, m_physics, m_entities, dt, &m_simulation };
         m_entities.tick(ctx);
+        m_clock.advance_ticks(1.0, m_settings.day_cycle);
         if (m_jump_latch) { m_jump_latch = false; MovementIntent i = m_player->intent(); i.jump = false; m_player->set_intent(i); }
         const double void_z = m_world.settings().min_z - m_world.settings().void_depth;
         if (m_player->position().z < void_z) respawn_player();
     }
 
-    static constexpr double TIME_STEP_DAYS = 1.0 / WorldClock::HOURS_PER_DAY;
     inline static const vector3d LEGACY_SUN{ -0.35, 0.55, -1.0 };
+    static constexpr int LOOK_SETTLE_FRAMES = 2;
 
     static Color opaque(const Color& c) noexcept { return Color(c.red(), c.green(), c.blue()); }
 
@@ -402,13 +548,14 @@ private:
         return r;
     }
 
-    static MovementModeRegistry make_movement_modes() {
+    static MovementModeRegistry make_movement_modes(const CharacterSettings& character) {
         MovementModeRegistry r;
-        MovementModeRegistry::register_defaults(r);
+        MovementModeRegistry::register_defaults(r, character);
         return r;
     }
 
     GameSettings                    m_settings;
+    GameSettings                    m_default_settings;
     BlockRegistry                   m_registry;
     DefaultBlocks                   m_block_ids;
     AttributeRegistry               m_attributes;
@@ -424,13 +571,13 @@ private:
     EntityManager                   m_entities;
     Player*                         m_player;
     GameCamera                      m_camera;
-    InputBindings                   m_bindings;
     std::unique_ptr<fizmo::windows::CursorLock> m_cursor;
 
     WorldClock                      m_clock;
     std::unique_ptr<SunPath>        m_sun_path;
     SkyState                        m_sky;
     LightingDirector                m_lighting;
+    CelestialRenderer               m_celestial;
     DynamicLights                   m_dynamic_lights;
     std::vector<DynamicLight>       m_frame_lights;
     WorldRenderer                   m_world_renderer;
@@ -438,6 +585,10 @@ private:
     ReflectionPlanes                m_reflections;
     BlockOutlineRenderer            m_outline;
     Hud                             m_hud;
+    SettingsMenu                    m_menu;
+    bool                            m_display_dirty = false;
+    bool                            m_key_consumed = false;
+    int                             m_ignore_look = 0;
     WorldRenderStats                m_stats;
 
     SimulationArea                  m_simulation;

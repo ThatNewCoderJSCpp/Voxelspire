@@ -99,6 +99,11 @@ public:
     const ChunkMap&     chunks()    const noexcept { return m_chunks; }
     const TileMap&      tiles()     const noexcept { return m_tiles; }
 
+    void remesh_all() {
+        for (const auto& kv : m_chunks) want(kv.first);
+        for (auto& kv : m_tiles) { ++kv.second.epoch; enqueue_tile(kv.first); }
+    }
+
     void set_selection(LodSelection selection) {
         std::unordered_set<LodTileKey, LodTileKeyHash> keep(selection.tiles.begin(), selection.tiles.end());
 
@@ -339,11 +344,6 @@ private:
         m_tile_queue.insert(k);
     }
 
-    void remesh_all() {
-        for (const auto& kv : m_chunks) want(kv.first);
-        for (auto& kv : m_tiles) { ++kv.second.epoch; enqueue_tile(kv.first); }
-    }
-
     void handle_column_events() {
         for (const auto& ev : m_world.take_column_events()) {
             if (ev.second != ColumnEvent::Unloaded) continue;
@@ -476,8 +476,14 @@ private:
         m_tile_candidates.assign(m_tile_queue.begin(), m_tile_queue.end());
         const std::size_t count = vmin(static_cast<std::size_t>(room), m_tile_candidates.size());
 
-        std::partial_sort(m_tile_candidates.begin(), m_tile_candidates.begin() + static_cast<std::ptrdiff_t>(count), m_tile_candidates.end(),
-                          [&](const LodTileKey& a, const LodTileKey& b) { return tile_distance(a) < tile_distance(b); });
+        std::partial_sort(
+            m_tile_candidates.begin(), 
+            m_tile_candidates.begin() + static_cast<std::ptrdiff_t>(count), 
+            m_tile_candidates.end(),
+            [&](const LodTileKey& a, const LodTileKey& b) { 
+                return tile_distance(a) < tile_distance(b); 
+            }
+        );
 
         for (std::size_t i = 0; i < count; ++i) {
             const LodTileKey k = m_tile_candidates[i];

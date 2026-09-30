@@ -6,7 +6,7 @@
 #include <memory>
 #include <utility>
 #include <vector>
-#include "entity_body.hpp"
+#include "character_settings.hpp"
 #include "../core/function_ref.hpp"
 #include "../core/types.hpp"
 
@@ -83,6 +83,7 @@ public:
     virtual double gravity_scale()           const noexcept { return 1.0; }
     virtual double drag_scale(const MovementIntent&) const noexcept { return 1.0; }
     virtual bool   can_jump()                const noexcept { return true; }
+    
     virtual double rising_speed_limit(const MovementStats& stats, const MovementIntent& intent) const noexcept {
         return vmax(stats.speed * speed_multiplier(intent), can_jump() ? stats.jump_velocity : 0.0);
     }
@@ -114,17 +115,21 @@ private:
 
 class WalkMode final : public MovementMode {
 public:
-    explicit WalkMode(double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::movement_speed),
-                      double alt_speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::alt_walk_speed))
-        : MovementMode(MovementModes::Walk, 0, Poses::Standing, speed_multiplier, alt_speed_multiplier) {}
+    explicit WalkMode(
+        double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::movement_speed),
+        double alt_speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::alt_walk_speed)
+    ) : MovementMode(MovementModes::Walk, 0, Poses::Standing, speed_multiplier, alt_speed_multiplier) {}
+    
     bool is_active(const MovementContext&) const override { return true; }
 };
 
 class SprintMode final : public MovementMode {
 public:
-    explicit SprintMode(double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::sprint_speed),
-                        double alt_speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::alt_sprint_speed))
-        : MovementMode(MovementModes::Sprint, 100, Poses::Standing, speed_multiplier, alt_speed_multiplier) {}
+    explicit SprintMode(
+        double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::sprint_speed),
+        double alt_speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::alt_sprint_speed)
+    ) : MovementMode(MovementModes::Sprint, 100, Poses::Standing, speed_multiplier, alt_speed_multiplier) {}
+    
     bool is_active(const MovementContext& ctx) const override {
         return ctx.intent.sprint && ctx.intent.forward > 0.0 && ctx.fits(pose());
     }
@@ -132,9 +137,11 @@ public:
 
 class CrouchMode final : public MovementMode {
 public:
-    explicit CrouchMode(double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::crouch_speed),
-                        double alt_speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::alt_crouch_speed))
-        : MovementMode(MovementModes::Crouch, 200, Poses::Crouching, speed_multiplier, alt_speed_multiplier) {}
+    explicit CrouchMode(
+        double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::crouch_speed),
+        double alt_speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::alt_crouch_speed)
+    ) : MovementMode(MovementModes::Crouch, 200, Poses::Crouching, speed_multiplier, alt_speed_multiplier) {}
+    
     bool is_active(const MovementContext& ctx) const override {
         return ctx.intent.crouch || !ctx.fits(Poses::Standing);
     }
@@ -142,12 +149,15 @@ public:
 
 class CrawlMode final : public MovementMode {
 public:
-    explicit CrawlMode(double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::crawl_speed),
-                       double alt_speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::alt_crawl_speed))
-        : MovementMode(MovementModes::Crawl, 300, Poses::Prone, speed_multiplier, alt_speed_multiplier) {}
+    explicit CrawlMode(
+        double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::crawl_speed),
+        double alt_speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::alt_crawl_speed)
+    ) : MovementMode(MovementModes::Crawl, 300, Poses::Prone, speed_multiplier, alt_speed_multiplier) {}
+    
     bool is_active(const MovementContext& ctx) const override {
         return ctx.intent.crawl || !ctx.fits(Poses::Crouching);
     }
+
     bool can_jump() const noexcept override { return false; }
 };
 
@@ -155,11 +165,15 @@ class SwimMode final : public MovementMode {
 public:
     static constexpr int DEFAULT_PRIORITY = 400;
 
-    explicit SwimMode(double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::swim_speed),
-                      double alt_speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::alt_swim_speed),
-                      double accel_multiplier = MovementRatios::acceleration(PlayerDefaults::movement::swim_acceleration),
-                      double rise_speed = PlayerDefaults::swimming::rise_speed, double sink_speed = PlayerDefaults::swimming::sink_speed,
-                      double vertical_accel = PlayerDefaults::swimming::vertical_accel, double surface_leap = PlayerDefaults::swimming::surface_leap)
+    explicit SwimMode(
+        double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::swim_speed),
+        double alt_speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::alt_swim_speed),
+        double accel_multiplier = MovementRatios::acceleration(PlayerDefaults::movement::swim_acceleration),
+        double rise_speed = PlayerDefaults::swimming::rise_speed, 
+        double sink_speed = PlayerDefaults::swimming::sink_speed,
+        double vertical_accel = PlayerDefaults::swimming::vertical_accel, 
+        double surface_leap = PlayerDefaults::swimming::surface_leap
+    )
         : MovementMode(MovementModes::Swim, DEFAULT_PRIORITY, Poses::Standing, speed_multiplier, alt_speed_multiplier),
           m_accel(accel_multiplier), m_rise(rise_speed), m_sink(sink_speed), m_vertical_accel(vertical_accel), m_leap(surface_leap) {}
 
@@ -175,6 +189,7 @@ public:
         const double accel = stats.ground_accel * acceleration_multiplier() * dt;
         v.x = approach(v.x, target.x, accel);
         v.y = approach(v.y, target.y, accel);
+
         if (ctx.intent.jump && !ctx.head_in_fluid && (wish.x != 0.0 || wish.y != 0.0)) {
             v.z = vmax(v.z, stats.jump_velocity * m_leap);
             return;
@@ -192,11 +207,12 @@ class StrokeMode final : public MovementMode {
 public:
     static constexpr int DEFAULT_PRIORITY = 450;
 
-    explicit StrokeMode(double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::stroke_speed),
-                        double alt_speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::alt_stroke_speed),
-                        double accel = MovementRatios::acceleration(PlayerDefaults::movement::stroke_acceleration),
-                        double buoyancy = PlayerDefaults::swimming::stroke_buoyancy)
-        : MovementMode(MovementModes::Stroke, DEFAULT_PRIORITY, Poses::Swimming, speed_multiplier, alt_speed_multiplier), m_accel(accel), m_buoyancy(buoyancy) {}
+    explicit StrokeMode(
+        double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::stroke_speed),
+        double alt_speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::alt_stroke_speed),
+        double accel = MovementRatios::acceleration(PlayerDefaults::movement::stroke_acceleration),
+        double buoyancy = PlayerDefaults::swimming::stroke_buoyancy
+    ) : MovementMode(MovementModes::Stroke, DEFAULT_PRIORITY, Poses::Swimming, speed_multiplier, alt_speed_multiplier), m_accel(accel), m_buoyancy(buoyancy) {}
 
     bool is_active(const MovementContext& ctx) const override {
         return ctx.in_fluid && (ctx.intent.swim || !ctx.fits(Poses::Crouching));
@@ -229,9 +245,11 @@ public:
     static constexpr double DEFAULT_ALT_DRAG    = 35.0;
     static constexpr int    DEFAULT_PRIORITY    = 150;
 
-    explicit FlutterMode(double drag = DEFAULT_DRAG, double min_drop = DEFAULT_MIN_DROP,
-                         double probe_depth = DEFAULT_PROBE_DEPTH, double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::movement_speed),
-                         double alt_drag = DEFAULT_ALT_DRAG, int priority = DEFAULT_PRIORITY)
+    explicit FlutterMode(
+        double drag = DEFAULT_DRAG, double min_drop = DEFAULT_MIN_DROP,
+        double probe_depth = DEFAULT_PROBE_DEPTH, double speed_multiplier = MovementRatios::speed(PlayerDefaults::movement::movement_speed),
+        double alt_drag = DEFAULT_ALT_DRAG, int priority = DEFAULT_PRIORITY
+    )
         : MovementMode(MovementModes::Flutter, priority, Poses::Standing, speed_multiplier, speed_multiplier),
           m_drag(drag), m_alt_drag(alt_drag), m_min_drop(min_drop), m_probe(vmax(probe_depth, min_drop)) {}
 
@@ -259,8 +277,13 @@ public:
     static constexpr double DEFAULT_VERTICAL_ACCEL   = PlayerDefaults::flying::vertical_accel;
     static constexpr int    DEFAULT_PRIORITY         = 350;
 
-    explicit FlyMode(double speed_multiplier = DEFAULT_SPEED_MULTIPLIER, double vertical_speed = DEFAULT_VERTICAL_SPEED,
-                     double vertical_accel = DEFAULT_VERTICAL_ACCEL, double alt_speed_multiplier = DEFAULT_ALT_MULTIPLIER, int priority = DEFAULT_PRIORITY)
+    explicit FlyMode(
+        double speed_multiplier = DEFAULT_SPEED_MULTIPLIER, 
+        double vertical_speed = DEFAULT_VERTICAL_SPEED,
+        double vertical_accel = DEFAULT_VERTICAL_ACCEL, 
+        double alt_speed_multiplier = DEFAULT_ALT_MULTIPLIER, 
+        int priority = DEFAULT_PRIORITY
+    )
         : MovementMode(MovementModes::Fly, priority, Poses::Standing, speed_multiplier, alt_speed_multiplier),
           m_vertical_speed(vertical_speed), m_vertical_accel(vertical_accel) {}
 
@@ -312,13 +335,19 @@ public:
 
     std::size_t size() const noexcept { return m_modes.size(); }
 
-    static void register_defaults(MovementModeRegistry& r) {
-        r.add<WalkMode>();
-        r.add<SprintMode>();
-        r.add<CrouchMode>();
-        r.add<CrawlMode>();
-        r.add<SwimMode>();
-        r.add<StrokeMode>();
+    static void register_defaults(MovementModeRegistry& r, const CharacterSettings& c = CharacterSettings{}) {
+        r.add<WalkMode>(c.speed_ratio(c.walk_speed), c.speed_ratio(c.alt_walk_speed));
+        r.add<SprintMode>(c.speed_ratio(c.sprint_speed), c.speed_ratio(c.alt_sprint_speed));
+        r.add<CrouchMode>(c.speed_ratio(c.crouch_speed), c.speed_ratio(c.alt_crouch_speed));
+        r.add<CrawlMode>(c.speed_ratio(c.crawl_speed), c.speed_ratio(c.alt_crawl_speed));
+        
+        r.add<SwimMode>(
+            c.speed_ratio(c.swim_speed), c.speed_ratio(c.alt_swim_speed), 
+            c.acceleration_ratio(c.swim_acceleration),
+            c.swim_rise_speed, c.swim_sink_speed, c.swim_vertical_accel, c.surface_leap
+        );
+
+        r.add<StrokeMode>(c.speed_ratio(c.stroke_speed), c.speed_ratio(c.alt_stroke_speed), c.acceleration_ratio(c.stroke_acceleration), c.stroke_buoyancy);
     }
 
 private:

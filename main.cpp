@@ -13,6 +13,11 @@ int main() {
     app.on_update([&](double dt) {
         game.update(dt, app.input());
         app.set_clear_color(game.sky_color());
+
+        if (game.take_display_change()) {
+            app.renderer().set_vsync(game.settings().display.vsync);
+            app.set_max_fps(game.settings().display.max_fps);
+        }
     });
 
     app.on_render([&](Renderer& r) { game.render(r, app.fps_average()); });

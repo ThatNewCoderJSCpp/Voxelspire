@@ -30,8 +30,14 @@ public:
         return d;
     }
 
-    const fizmo::graphics::SceneLighting3D& build(const SkyState& sky, const World& world, const vector3d& camera, const std::vector<DynamicLight>& lights,
-                                                  double seconds = 0.0, const Color* camera_medium = nullptr) {
+    const fizmo::graphics::SceneLighting3D& build(
+        const SkyState& sky, 
+        const World& world, 
+        const vector3d& camera, 
+        const std::vector<DynamicLight>& lights,
+        double seconds = 0.0, 
+        const Color* camera_medium = nullptr
+    ) {
         using namespace fizmo::graphics;
         const LightingSettings& s = m_settings;
         SceneLighting3D& out = m_scene;
@@ -117,14 +123,11 @@ private:
         a.horizon       = sky.horizon;
         a.glow          = sky.glow;
         a.glow_strength = static_cast<float>(s.sky_glow * (1.0 - sky.night));
-        a.sun_disk      = static_cast<float>(s.sun_disk);
-        a.moon_disk     = static_cast<float>(s.moon_disk);
-        a.sun_radius    = static_cast<float>(s.sun_disk_size);
-        a.moon_radius   = static_cast<float>(s.moon_disk_size);
-        a.sun_disk_color = s.sun_disk_color;
+        a.sun_disk      = 0.0f;
+        a.moon_disk     = 0.0f;
+        a.stars         = 0.0f;
         a.glow_spread   = static_cast<float>(s.sun_glow_spread);
         a.glow_focus    = static_cast<float>(s.sun_glow_focus);
-        a.stars         = static_cast<float>(s.stars * sky.night);
         a.fog_density   = static_cast<float>(s.fog_density);
         a.fog_start     = static_cast<float>(s.fog_start);
 

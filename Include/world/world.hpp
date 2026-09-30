@@ -38,8 +38,18 @@ public:
 
     const BlockRegistry& blocks()   const noexcept { return *m_registry; }
     const WorldSettings& settings() const noexcept { return m_settings; }
-    const ChunkMap&      chunks()   const noexcept { return m_chunks; }
-    const ColumnMap&     columns()  const noexcept { return m_columns; }
+
+    void set_physics(const WorldSettings& physics) {
+        m_settings.gravity          = physics.gravity;
+        m_settings.air_resistance   = physics.air_resistance;
+        m_settings.fluid_resistance = physics.fluid_resistance;
+        m_settings.fluid_buoyancy   = physics.fluid_buoyancy;
+        m_settings.fluid_sink_speed = physics.fluid_sink_speed;
+        m_settings = m_settings.validated();
+    }
+
+    const ChunkMap&  chunks()  const noexcept { return m_chunks; }
+    const ColumnMap& columns() const noexcept { return m_columns; }
 
     static ChunkPos chunk_pos_of(const BlockPos& p) noexcept {
         return { floor_div(p.x, Chunk::SIZE), floor_div(p.y, Chunk::SIZE), floor_div(p.z, Chunk::SIZE) };
@@ -65,6 +75,7 @@ public:
     }
 
     bool column_loaded(const ColumnPos& c) const noexcept { return m_columns.count(c) != 0; }
+    
     const ChunkColumn* column(const ColumnPos& c) const noexcept {
         auto it = m_columns.find(c);
         return it == m_columns.end() ? nullptr : &it->second;

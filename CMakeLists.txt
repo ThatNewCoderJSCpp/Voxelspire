@@ -10,7 +10,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(FetchContent)
 FetchContent_Declare(fizmo
     GIT_REPOSITORY https://github.com/ThatNewCoderJSCpp/Fizmo.git
-    GIT_TAG        v0.1.15
+    GIT_TAG        v0.1.16
     GIT_SHALLOW    TRUE
     SOURCE_SUBDIR  Fizmo)
 FetchContent_MakeAvailable(fizmo)
