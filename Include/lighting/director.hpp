@@ -84,7 +84,11 @@ public:
         return out;
     }
 
-    LightLevel light_level_at(const World& world, const vector3d& p, const std::vector<DynamicLight>& lights) const {
+    LightLevel light_level_at(
+        const World& world,
+        const vector3d& p, 
+        const std::vector<DynamicLight>& lights
+    ) const {
         LightLevel level = world.light_at(BlockPos::containing(p));
 
         for (const DynamicLight& l : lights) {
@@ -226,8 +230,14 @@ private:
             const double strength = static_cast<double>(e.light.level()) / LightLimits::MAX;
             const Color color = colored ? emission_color(e.light) : m_settings.block_tint;
             const double fade = rank_fade(cut, m_order[k].first);
-            m_scene.point_lights.emplace_back(e.pos.center(), color, static_cast<float>(m_settings.block_point_light_intensity * strength * fade),
-                                              static_cast<float>(m_settings.block_point_light_radius * strength), m_settings.point_shadows);
+
+            m_scene.point_lights.emplace_back(
+                e.pos.center(), 
+                color, 
+                static_cast<float>(m_settings.block_point_light_intensity * strength * fade),
+                static_cast<float>(m_settings.block_point_light_radius * strength), 
+                m_settings.point_shadows
+            );
         }
     }
 
@@ -243,11 +253,11 @@ private:
         return Color(ch(e.red), ch(e.green), ch(e.blue));
     }
 
-    LightingSettings                        m_settings;
-    fizmo::graphics::SceneLighting3D        m_scene;
+    LightingSettings                                m_settings;
+    fizmo::graphics::SceneLighting3D                m_scene;
     std::vector<fizmo::graphics::ReflectionPlane3D> m_planes;
-    std::vector<EmitterBlock>               m_emitters;
-    std::vector<std::pair<double, std::size_t>> m_order;
+    std::vector<EmitterBlock>                       m_emitters;
+    std::vector<std::pair<double, std::size_t>>     m_order;
 };
 
 } // namespace voxelspire

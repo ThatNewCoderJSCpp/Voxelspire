@@ -68,8 +68,13 @@ private:
     }
 
     static void visit(
-        LodSelection& out, const LodTileKey& k, const vector3d& camera, double R, double D,
-        const LodLayout& layout, const World& world
+        LodSelection& out, 
+        const LodTileKey& k, 
+        const vector3d& camera, 
+        double R, 
+        double D,
+        const LodLayout& layout, 
+        const World& world
     ) {
         const BlockPos o = layout.origin(k);
         const double size = layout.tile_blocks(k.level);

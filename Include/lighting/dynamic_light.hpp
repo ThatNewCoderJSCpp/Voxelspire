@@ -9,10 +9,10 @@ namespace voxelspire {
 
 struct DynamicLight {
     vector3d position{};
-    Color    color     = Color(255, 196, 128);
-    double   intensity = 1.0;
-    double   radius    = 12.0;
-    int      level     = 12;
+    Color    color               = Color(255, 196, 128);
+    double   intensity           = 1.0;
+    double   radius              = 12.0;
+    int      level               = 12;
     bool     affects_light_level = false;
     bool     casts_shadows       = false;
 

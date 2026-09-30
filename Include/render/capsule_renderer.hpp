@@ -14,9 +14,13 @@ public:
     CapsuleRenderer(int segments, int rings_per_cap, Color body, Color visor)
         : m_segments(vmax(segments, 6)), m_rings(vmax(rings_per_cap, 2)), m_body(body), m_visor(visor) {}
 
-    void render(fizmo::windows::Renderer& renderer, const Player& player, double alpha,
-                fizmo::graphics::BakedLight light = fizmo::graphics::BakedLight::full_sky(),
-                fizmo::graphics::View3D view = fizmo::graphics::View3D::Everywhere) {
+    void render(
+        fizmo::windows::Renderer& renderer, 
+        const Player& player, 
+        double alpha,
+        fizmo::graphics::BakedLight light = fizmo::graphics::BakedLight::full_sky(),
+        fizmo::graphics::View3D view = fizmo::graphics::View3D::Everywhere
+    ) {
         const vector3d feet = player.interpolated_position(alpha);
         const double yaw = deg_to_rad(player.yaw());
         const double c = std::cos(yaw), s = std::sin(yaw);

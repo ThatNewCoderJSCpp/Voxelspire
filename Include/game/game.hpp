@@ -177,6 +177,7 @@ public:
             const auto view = third_person ? fizmo::graphics::View3D::Everywhere : fizmo::graphics::View3D::ReflectionsOnly;
             m_capsule.render(renderer, *m_player, m_alpha, m_lighting.render_light_at(m_world, m_player->interpolated_position(m_alpha) + vector3d{ 0.0, 0.0, m_player->height() * 0.5 }), view);
         }
+
         if (m_target && !m_menu.is_open()) m_outline.render(renderer, m_world, *m_target, m_settings.render);
         renderer.end_3d();
 
@@ -298,12 +299,12 @@ public:
     }
 
     void set_sun_path(std::unique_ptr<SunPath> path) { if (path) m_sun_path = std::move(path); }
-    CelestialRenderer& celestial() noexcept { return m_celestial; }
-    const SunPath& sun_path() const noexcept { return *m_sun_path; }
-    WorldClock&    clock()          noexcept { return m_clock; }
-    const SkyState& sky()     const noexcept { return m_sky; }
-    Color          sky_color() const noexcept { return m_lighting.enabled() ? m_sky.sky_color : m_settings.render.sky_color; }
-    DynamicLights& dynamic_lights() noexcept { return m_dynamic_lights; }
+    CelestialRenderer& celestial()       noexcept { return m_celestial; }
+    const SunPath&     sun_path()  const noexcept { return *m_sun_path; }
+    WorldClock&        clock()           noexcept { return m_clock; }
+    const SkyState&    sky()       const noexcept { return m_sky; }
+    Color              sky_color() const noexcept { return m_lighting.enabled() ? m_sky.sky_color : m_settings.render.sky_color; }
+    DynamicLights&     dynamic_lights()  noexcept { return m_dynamic_lights; }
 
 public:
     GameSettings&         settings()        noexcept { return m_settings; }
@@ -333,9 +334,9 @@ public:
         m_streaming_dirty = true;
     }
 
-    TerrainMeshes&       terrain()  noexcept { return m_terrain; }
-    ChunkStreamer&       streamer() noexcept { return m_streamer; }
-    JobSystem&           jobs()     noexcept { return m_jobs; }
+    TerrainMeshes&       terrain()          noexcept { return m_terrain; }
+    ChunkStreamer&       streamer()         noexcept { return m_streamer; }
+    JobSystem&           jobs()             noexcept { return m_jobs; }
     const WorldGenerator& generator() const noexcept { return *m_generator; }
 
     double render_distance() const noexcept { return m_settings.render.render_distance; }
@@ -456,6 +457,7 @@ private:
         std::sort(out.begin(), out.end(), [&c](const ColumnPos& a, const ColumnPos& b) {
             return (a.x - c.x) * (a.x - c.x) + (a.y - c.y) * (a.y - c.y) < (b.x - c.x) * (b.x - c.x) + (b.y - c.y) * (b.y - c.y);
         });
+
         return out;
     }
 
@@ -524,10 +526,12 @@ private:
 
     void gather_lights() {
         m_frame_lights.clear();
+        
         m_entities.for_each([this](const Entity& e) {
             DynamicLight l;
             if (e.emits_light(l, m_alpha)) m_frame_lights.push_back(l);
         });
+        
         m_dynamic_lights.for_each([this](const DynamicLight& l) { m_frame_lights.push_back(l); });
     }
 

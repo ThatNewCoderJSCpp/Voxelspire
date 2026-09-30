@@ -261,16 +261,16 @@ private:
         if (f != ChunkColumn::NO_FLOOR)   mark_changed({ col.x, col.y, floor_div(f, Chunk::SIZE) });
     }
 
-    const BlockRegistry* m_registry;
-    WorldSettings        m_settings;
-    ChunkMap             m_chunks;
-    ColumnMap            m_columns;
-    std::vector<ChunkPos> m_changed;
-    std::unordered_set<ChunkPos, ChunkPosHash> m_changed_set;
+    const BlockRegistry*                           m_registry;
+    WorldSettings                                  m_settings;
+    ChunkMap                                       m_chunks;
+    ColumnMap                                      m_columns;
+    std::vector<ChunkPos>                          m_changed;
+    std::unordered_set<ChunkPos, ChunkPosHash>     m_changed_set;
     std::vector<std::pair<ColumnPos, ColumnEvent>> m_column_events;
-    std::vector<ColumnPos> m_edited;
-    std::unordered_set<ColumnPos, ColumnPosHash> m_edited_set;
-    std::unique_ptr<LightEngine> m_light;
+    std::vector<ColumnPos>                         m_edited;
+    std::unordered_set<ColumnPos, ColumnPosHash>   m_edited_set;
+    std::unique_ptr<LightEngine>                   m_light;
 };
 
 } // namespace voxelspire

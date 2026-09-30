@@ -19,12 +19,12 @@
 namespace voxelspire {
 
 struct EngineLimits {
-    static constexpr double MIN_RENDER_DISTANCE = 16.0;
-    static constexpr double MAX_RENDER_DISTANCE = 1000000.0;
-    static constexpr int CHUNK_SIZE  = 16;
-    static constexpr int WORLD_MIN_Z = -512;
-    static constexpr int WORLD_MAX_Z = 1024;
-    static constexpr int WORLD_MAX_HORIZONTAL = 950'000'000;
+    static constexpr double MIN_RENDER_DISTANCE  = 16.0;
+    static constexpr double MAX_RENDER_DISTANCE  = 1000000.0;
+    static constexpr int    CHUNK_SIZE           = 16;
+    static constexpr int    WORLD_MIN_Z          = -512;
+    static constexpr int    WORLD_MAX_Z          = 1024;
+    static constexpr int    WORLD_MAX_HORIZONTAL = 950'000'000;
 };
 
 struct WorldDefaults {
@@ -48,15 +48,15 @@ struct WorldDefaults {
 struct WorldSettings {
     static constexpr std::uint64_t RANDOM_SEED = 0;
 
-    std::uint64_t seed      = RANDOM_SEED;
-    int    min_z            = WorldDefaults::min_z;
-    int    max_z            = WorldDefaults::max_z;
-    double gravity          = WorldDefaults::gravity;
-    double void_depth       = WorldDefaults::void_depth;
-    int    horizontal_limit = EngineLimits::WORLD_MAX_HORIZONTAL;
+    std::uint64_t seed       = RANDOM_SEED;
+    int    min_z             = WorldDefaults::min_z;
+    int    max_z             = WorldDefaults::max_z;
+    double gravity           = WorldDefaults::gravity;
+    double void_depth        = WorldDefaults::void_depth;
+    int    horizontal_limit  = EngineLimits::WORLD_MAX_HORIZONTAL;
     LightFormat light_format = LightFormat::Colored;
 
-    std::shared_ptr<const AirResistance> air_resistance = WorldDefaults::air_resistance();
+    std::shared_ptr<const AirResistance> air_resistance     = WorldDefaults::air_resistance();
     std::shared_ptr<const FluidResistance> fluid_resistance = WorldDefaults::fluid_resistance();
     double fluid_buoyancy   = WorldDefaults::fluid_buoyancy;
     double fluid_sink_speed = WorldDefaults::fluid_sink_speed;

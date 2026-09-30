@@ -245,12 +245,14 @@ private:
         for (std::size_t i = 0; i < m_tabs.size(); ++i) {
             const int ty = y + static_cast<int>(i) * th;
             const bool selected = i == m_tab;
+
             if (selected) {
                 r.draw_rect(x, ty, static_cast<unsigned int>(w), static_cast<unsigned int>(th), fill(style.panel));
                 r.draw_rect(x, ty, static_cast<unsigned int>(px(ACCENT_BAR)), static_cast<unsigned int>(th), fill(style.accent));
             } else if (hot(x, ty, w, th)) {
                 r.draw_rect(x, ty, static_cast<unsigned int>(w), static_cast<unsigned int>(th), fill(style.row_hover));
             }
+
             text(r, x + px(PAD), ty + th / 2, m_tabs[i].name, px(TEXT_SIZE), selected ? style.text : style.muted, selected);
             add_hit(x, ty, w, th, HitKind::Tab, -1, static_cast<int>(i));
         }
@@ -630,28 +632,28 @@ private:
 
     static constexpr const char* CANCEL_KEY = "Escape";
 
-    std::vector<SettingsTab>              m_tabs;
-    std::vector<Hit>                      m_hits;
-    std::vector<Row>                      m_rows;
-    std::unordered_map<int, std::pair<int, int>> m_track;
-    std::unordered_map<int, std::pair<int, int>> m_channel;
+    std::vector<SettingsTab>                      m_tabs;
+    std::vector<Hit>                              m_hits;
+    std::vector<Row>                              m_rows;
+    std::unordered_map<int, std::pair<int, int>>  m_track;
+    std::unordered_map<int, std::pair<int, int>>  m_channel;
     std::unordered_map<std::string, unsigned int> m_widths;
-    std::unordered_map<int, int>          m_heights;
-    std::size_t   m_tab = 0;
-    bool          m_open = false;
-    bool          m_close_requested = false;
-    int           m_capture = -1;
-    bool          m_capture_add = false;
-    Drag          m_drag;
-    int           m_scroll = 0;
-    int           m_scroll_steps = 0;
-    int           m_hover_control = -1;
-    int           m_mouse_x = 0, m_mouse_y = 0;
-    int           m_row_h = 1;
-    int           m_content_x = 0, m_content_y = 0, m_content_w = 0, m_content_h = 0;
-    double        m_s = 1.0;
-    std::uint32_t m_changes = Apply::Nothing;
-    const char*   m_save_note = ".";
+    std::unordered_map<int, int>                  m_heights;
+    std::size_t                                   m_tab = 0;
+    bool                                          m_open = false;
+    bool                                          m_close_requested = false;
+    int                                           m_capture = -1;
+    bool                                          m_capture_add = false;
+    Drag                                          m_drag;
+    int                                           m_scroll = 0;
+    int                                           m_scroll_steps = 0;
+    int                                           m_hover_control = -1;
+    int                                           m_mouse_x = 0, m_mouse_y = 0;
+    int                                           m_row_h = 1;
+    int                                           m_content_x = 0, m_content_y = 0, m_content_w = 0, m_content_h = 0;
+    double                                        m_s = 1.0;
+    std::uint32_t                                 m_changes = Apply::Nothing;
+    const char*                                   m_save_note = ".";
 };
 
 } // namespace voxelspire

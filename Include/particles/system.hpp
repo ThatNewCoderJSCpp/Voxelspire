@@ -119,6 +119,7 @@ public:
 
     std::size_t count()         const noexcept { return m_type.size(); }
     std::size_t emitter_count() const noexcept { return m_emitters.size(); }
+    
     std::size_t drawn() const noexcept {
         std::size_t n = 0;
         for (const auto& list : m_lists) n += list.size();

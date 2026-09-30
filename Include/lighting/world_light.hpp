@@ -173,8 +173,11 @@ private:
     using Section = std::array<Cell, Chunk::VOLUME>;
     using Height  = std::int16_t;
 
-    static_assert(EngineLimits::WORLD_MIN_Z - 1 >= std::numeric_limits<Height>::min() && EngineLimits::WORLD_MAX_Z + 1 <= std::numeric_limits<Height>::max(),
-                  "sky floors must fit the height type");
+    static_assert(
+        EngineLimits::WORLD_MIN_Z - 1 >= std::numeric_limits<Height>::min() &&
+        EngineLimits::WORLD_MAX_Z + 1 <= std::numeric_limits<Height>::max(),
+        "sky floors must fit the height type"
+    );
 
     struct Column {
         std::array<Height, ChunkColumn::AREA>       sky_floor{};
@@ -596,26 +599,26 @@ private:
         --m_emitter_count;
     }
 
-    const World&                                           m_world;
-    const BlockTraits*                                     m_traits = nullptr;
-    int                                                    m_min_z, m_max_z, m_min_cz, m_levels;
-    std::unordered_map<ColumnPos, Column, ColumnPosHash>   m_columns;
-    std::deque<ColumnPos>                                  m_pending;
-    std::unordered_set<ColumnPos, ColumnPosHash>           m_pending_set;
-    std::vector<Edit>                                      m_edits;
-    std::vector<Edit>                                      m_edits_running;
-    std::vector<std::pair<Column*, int>>                   m_touched;
-    bool                                                   m_tracking = false;
-    std::vector<Node>                                      m_queue;
-    std::vector<Removal>                                   m_removals;
-    ChunkChangeSink                                        m_sink;
-    ChunkPos                                               m_last_marked{};
-    std::size_t                                            m_sections = 0;
-    std::size_t                                            m_emitter_count = 0;
-    std::size_t                                            m_changed_cells = 0;
-    double                                                 m_update_ms = 0.0;
-    mutable ColumnPos                                      m_cache_pos{ std::numeric_limits<int>::min(), std::numeric_limits<int>::min() };
-    mutable Column*                                        m_cache_col = nullptr;
+    const World&                                         m_world;
+    const BlockTraits*                                   m_traits = nullptr;
+    int                                                  m_min_z, m_max_z, m_min_cz, m_levels;
+    std::unordered_map<ColumnPos, Column, ColumnPosHash> m_columns;
+    std::deque<ColumnPos>                                m_pending;
+    std::unordered_set<ColumnPos, ColumnPosHash>         m_pending_set;
+    std::vector<Edit>                                    m_edits;
+    std::vector<Edit>                                    m_edits_running;
+    std::vector<std::pair<Column*, int>>                 m_touched;
+    bool                                                 m_tracking = false;
+    std::vector<Node>                                    m_queue;
+    std::vector<Removal>                                 m_removals;
+    ChunkChangeSink                                      m_sink;
+    ChunkPos                                             m_last_marked{};
+    std::size_t                                          m_sections = 0;
+    std::size_t                                          m_emitter_count = 0;
+    std::size_t                                          m_changed_cells = 0;
+    double                                               m_update_ms = 0.0;
+    mutable ColumnPos                                    m_cache_pos{ std::numeric_limits<int>::min(), std::numeric_limits<int>::min() };
+    mutable Column*                                      m_cache_col = nullptr;
 };
 
 inline std::unique_ptr<LightEngine> make_light_engine(const World& world, LightFormat format) {

@@ -101,9 +101,9 @@ public:
     static constexpr LightFormat FORMAT   = LightFormat::Colored;
     static constexpr int         SKY      = 0;
     static constexpr int         CHANNELS = 4;
-    static constexpr Cell        MASK = 0xF;
+    static constexpr Cell        MASK     = 0xF;
 
-    static constexpr int shift_of(int ch) noexcept { return ch == SKY ? PackedLight::SKY_SHIFT : PackedLight::RED_SHIFT - (ch - 1) * PackedLight::GREEN_SHIFT; }
+    static constexpr int shift_of(int ch)    noexcept { return ch == SKY ? PackedLight::SKY_SHIFT : PackedLight::RED_SHIFT - (ch - 1) * PackedLight::GREEN_SHIFT; }
     static constexpr int get(Cell c, int ch) noexcept { return (c >> shift_of(ch)) & MASK; }
 
     static constexpr Cell set(Cell c, int ch, int v) noexcept {
@@ -111,10 +111,10 @@ public:
         return static_cast<Cell>((c & ~(MASK << shift)) | ((v & MASK) << shift));
     }
 
-    static constexpr Cell sky_only(int sky) noexcept { return static_cast<Cell>((sky & MASK) << PackedLight::SKY_SHIFT); }
+    static constexpr Cell sky_only(int sky)                        noexcept { return static_cast<Cell>((sky & MASK) << PackedLight::SKY_SHIFT); }
     static constexpr int  emission(const LightEmission& e, int ch) noexcept { return ch == SKY ? 0 : e.channel(ch - 1); }
-    static constexpr LightLevel level(Cell c) noexcept { return PackedLight::unpack(c); }
-    static constexpr std::uint16_t packed(Cell c) noexcept { return c; }
+    static constexpr LightLevel level(Cell c)                      noexcept { return PackedLight::unpack(c); }
+    static constexpr std::uint16_t packed(Cell c)                  noexcept { return c; }
 };
 
 } // namespace voxelspire

@@ -36,8 +36,19 @@ public:
         const double cw = m[12] * v.x + m[13] * v.y + m[14] * v.z + m[15];
         const double inv_w = 1.0 / cw;
         const double LIMIT = 1.0e5;
-        return { vclamp((cx * inv_w * 0.5 + 0.5) * m_w, -LIMIT, LIMIT),
-                 vclamp((0.5 - cy * inv_w * 0.5) * m_h, -LIMIT, LIMIT) };
+
+        return { 
+            vclamp(
+                (cx * inv_w * 0.5 + 0.5) * m_w, 
+                -LIMIT, 
+                LIMIT
+            ),
+            vclamp(
+                (0.5 - cy * inv_w * 0.5) * m_h, 
+                -LIMIT, 
+                LIMIT
+            ) 
+        };
     }
 
     int project_polygon(const vector3d* world, int n, ScreenPoint* out) const noexcept {
@@ -50,7 +61,6 @@ public:
         }
 
         if (all_behind) return 0;
-
         const vector3d* src = in.data();
         int count = n;
 

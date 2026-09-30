@@ -14,6 +14,7 @@ struct FaceShading {
 
     double factor(Face f) const noexcept {
         double raw = factors.east_west;
+
         switch (f) {
             case Face::Up:    raw = factors.up; break;
             case Face::Down:  raw = factors.down; break;
@@ -21,7 +22,8 @@ struct FaceShading {
             case Face::South: raw = factors.north_south; break;
             default:          break;
         }
-        return 1.0 - (1.0 - raw) * strength;
+
+        return 1.0 + (raw - 1.0) * strength;
     }
 
     std::uint8_t level(Face f) const noexcept {
@@ -30,12 +32,12 @@ struct FaceShading {
 };
 
 struct FaceKey {
-    static constexpr std::uint64_t NONE      = 0;
-    static constexpr std::uint64_t HAS_FACE    = std::uint64_t(1) << 63;
-    static constexpr std::uint64_t TRANSLUCENT = std::uint64_t(1) << 62;
-    static constexpr int           VAR_SHIFT   = 32;
-    static constexpr int           SHADE_SHIFT = 40;
-    static constexpr int           FLAGS_SHIFT = 48;
+    static constexpr std::uint64_t NONE          = 0;
+    static constexpr std::uint64_t HAS_FACE      = std::uint64_t(1) << 63;
+    static constexpr std::uint64_t TRANSLUCENT   = std::uint64_t(1) << 62;
+    static constexpr int           VAR_SHIFT     = 32;
+    static constexpr int           SHADE_SHIFT   = 40;
+    static constexpr int           FLAGS_SHIFT   = 48;
     static constexpr int           MAX_VARIATION = 255;
 
     static std::uint64_t make(const Color& base, int variation, std::uint8_t shade, bool translucent = false, std::uint8_t vertex_flags = 0) noexcept {
@@ -54,13 +56,19 @@ struct FaceKey {
             case SurfaceFinish::Mirror: return fizmo::graphics::CompactMirror;
             case SurfaceFinish::Matte:  break;
         }
+
         return 0;
     }
 
     static Color color(std::uint64_t key) noexcept {
         const auto c = static_cast<std::uint32_t>(key);
-        return Color(static_cast<std::uint8_t>(c), static_cast<std::uint8_t>(c >> 8),
-                     static_cast<std::uint8_t>(c >> 16), static_cast<std::uint8_t>(c >> 24));
+
+        return Color(
+            static_cast<std::uint8_t>(c), 
+            static_cast<std::uint8_t>(c >> 8),
+            static_cast<std::uint8_t>(c >> 16), 
+            static_cast<std::uint8_t>(c >> 24)
+        );
     }
 
     static std::uint8_t variation(std::uint64_t key) noexcept { return static_cast<std::uint8_t>(key >> VAR_SHIFT); }
@@ -70,6 +78,7 @@ struct FaceKey {
 
 inline void face_corners(const vector3d& lo, const vector3d& hi, Face f, std::array<vector3d, 4>& out) noexcept {
     const double x0 = lo.x, y0 = lo.y, z0 = lo.z, x1 = hi.x, y1 = hi.y, z1 = hi.z;
+    
     switch (f) {
         case Face::West:  out = { vector3d{x0,y1,z0}, vector3d{x0,y0,z0}, vector3d{x0,y0,z1}, vector3d{x0,y1,z1} }; break;
         case Face::East:  out = { vector3d{x1,y0,z0}, vector3d{x1,y1,z0}, vector3d{x1,y1,z1}, vector3d{x1,y0,z1} }; break;

@@ -49,8 +49,8 @@ public:
 
     fizmo::graphics::Camera3D&       camera()       noexcept { return m_camera; }
     const fizmo::graphics::Camera3D& camera() const noexcept { return m_camera; }
-    const vector3d& position() const noexcept { return m_camera.position(); }
-    const vector3d& velocity() const noexcept { return m_velocity; }
+    const vector3d& position()                const noexcept { return m_camera.position(); }
+    const vector3d& velocity()                const noexcept { return m_velocity; }
 
 private:
     CameraSettings                          m_settings;

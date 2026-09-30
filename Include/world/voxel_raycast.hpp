@@ -33,7 +33,6 @@ inline std::optional<RaycastHit> raycast_blocks(const World& world, const vector
         const AABB box = block.collision_box(p);
         const auto hit = fizmo::geometry::ray_aabb(ray, box.min, box.max, max_distance);
         if (!hit) return false;
-
         const Face face = hit->inside ? Face::Up : face_from_normal(static_cast<int>(hit->normal.x), static_cast<int>(hit->normal.y), static_cast<int>(hit->normal.z));
         result = RaycastHit{ p, face, hit->distance, hit->point };
         return true;

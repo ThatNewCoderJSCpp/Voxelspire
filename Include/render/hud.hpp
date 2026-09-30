@@ -58,13 +58,13 @@ struct HudRow {
 
 class Hud {
 public:
-    static constexpr double FALLBACK_CHAR_WIDTH = 0.55;
-    static constexpr double MINUTES_PER_HOUR    = 60.0;
-    static constexpr double SCALE_STEP          = 0.1;
-    static constexpr double MIN_SCALE           = 0.5;
-    static constexpr double MAX_SCALE           = 3.0;
-    static constexpr std::size_t MAX_CACHED_WIDTHS = 4096;
-    static constexpr int    CORNER_COUNT        = 4;
+    static constexpr double      FALLBACK_CHAR_WIDTH = 0.55;
+    static constexpr double      MINUTES_PER_HOUR    = 60.0;
+    static constexpr double      SCALE_STEP          = 0.1;
+    static constexpr double      MIN_SCALE           = 0.5;
+    static constexpr double      MAX_SCALE           = 3.0;
+    static constexpr std::size_t MAX_CACHED_WIDTHS   = 4096;
+    static constexpr int         CORNER_COUNT        = 4;
 
     static HudCorner next_corner(HudCorner c) noexcept { return static_cast<HudCorner>((static_cast<int>(c) + 1) % CORNER_COUNT); }
 

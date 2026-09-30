@@ -121,12 +121,12 @@ struct DefaultBlocks {
 
     static DefaultBlocks register_all(BlockRegistry& registry, double color_variation = 1.0) {
         DefaultBlocks ids;
-        ids.grass   = registry.add<GrassBlock>(color_variation);
-        ids.dirt    = registry.add<DirtBlock>(color_variation);
-        ids.stone   = registry.add<StoneBlock>(color_variation);
-        ids.bedrock = registry.add<BedrockBlock>(color_variation);
-        ids.glass   = registry.add<GlassBlock>(color_variation);
-        ids.water   = registry.add<WaterBlock>(color_variation);
+        ids.grass      = registry.add<GrassBlock>(color_variation);
+        ids.dirt       = registry.add<DirtBlock>(color_variation);
+        ids.stone      = registry.add<StoneBlock>(color_variation);
+        ids.bedrock    = registry.add<BedrockBlock>(color_variation);
+        ids.glass      = registry.add<GlassBlock>(color_variation);
+        ids.water      = registry.add<WaterBlock>(color_variation);
         ids.lamp       = registry.add<LampBlock>(LampBlock::warm(), color_variation);
         ids.blue_lamp  = registry.add<LampBlock>(LampBlock::blue(), color_variation);
         ids.red_lamp   = registry.add<LampBlock>(LampBlock::red(), color_variation);
