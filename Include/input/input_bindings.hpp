@@ -12,7 +12,9 @@ enum class Action {
     MoveForward = 0, MoveBack, MoveLeft, MoveRight,
     Jump, Sprint, Crawl, Crouch,
     CycleCamera, ReleaseMouse, Respawn, ToggleHud,
-    RenderDistanceUp, RenderDistanceDown
+    RenderDistanceUp, RenderDistanceDown,
+    CycleLighting, ToggleHandLight, TimeForward, TimeBackward, ToggleDayCycle,
+    Swim, CycleHudCorner, HudLarger, HudSmaller, Alt
 };
 
 struct ActionHash { std::size_t operator()(Action a) const noexcept { return static_cast<std::size_t>(a); } };
@@ -37,6 +39,16 @@ public:
         b.bind(Action::ToggleHud,    { "F3" });
         b.bind(Action::RenderDistanceUp,   { "=", "+" });
         b.bind(Action::RenderDistanceDown, { "-", "_" });
+        b.bind(Action::CycleLighting,   { "F7" });
+        b.bind(Action::ToggleHandLight, { "l", "L" });
+        b.bind(Action::TimeForward,     { "]", "}" });
+        b.bind(Action::TimeBackward,    { "[", "{" });
+        b.bind(Action::ToggleDayCycle,  { "F8" });
+        b.bind(Action::Swim,            { "LeftShift" });
+        b.bind(Action::CycleHudCorner,  { "F4" });
+        b.bind(Action::Alt,             { "LeftAlt" });
+        b.bind(Action::HudLarger,       { "F10" });
+        b.bind(Action::HudSmaller,      { "F9" });
         return b;
     }
 

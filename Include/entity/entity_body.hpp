@@ -1,17 +1,18 @@
 #ifndef VOXELSPIRE_ENTITY_BODY_HPP
 #define VOXELSPIRE_ENTITY_BODY_HPP
 
-#include <string>
-#include <unordered_map>
 #include <utility>
+#include <vector>
+#include "../core/identifier.hpp"
 #include "player_defaults.hpp"
 
 namespace voxelspire {
 
 namespace Poses {
-    inline const std::string Standing  = "voxelspire:standing";
-    inline const std::string Crouching = "voxelspire:crouching";
-    inline const std::string Prone     = "voxelspire:prone";
+    inline const Identifier Standing  { "voxelspire:standing" };
+    inline const Identifier Crouching { "voxelspire:crouching" };
+    inline const Identifier Prone     { "voxelspire:prone" };
+    inline const Identifier Swimming  { "voxelspire:swimming" };
 } // namespace Poses
 
 struct PoseDimensions {
@@ -24,16 +25,20 @@ class EntityBody {
 public:
     explicit EntityBody(PoseDimensions standing) { set(Poses::Standing, standing); }
 
-    EntityBody& set(std::string pose, PoseDimensions dims) { m_poses[std::move(pose)] = dims; return *this; }
-
-    bool has(const std::string& pose) const noexcept { return m_poses.count(pose) > 0; }
-
-    const PoseDimensions& get(const std::string& pose) const noexcept {
-        auto it = m_poses.find(pose);
-        return it != m_poses.end() ? it->second : m_poses.at(Poses::Standing);
+    EntityBody& set(Identifier pose, PoseDimensions dims) {
+        for (auto& entry : m_poses) if (entry.first == pose) { entry.second = dims; return *this; }
+        m_poses.emplace_back(pose, dims);
+        return *this;
     }
 
-    const PoseDimensions& standing() const noexcept { return m_poses.at(Poses::Standing); }
+    bool has(Identifier pose) const noexcept { return find(pose) != nullptr; }
+
+    const PoseDimensions& get(Identifier pose) const noexcept {
+        const PoseDimensions* d = find(pose);
+        return d ? *d : standing();
+    }
+
+    const PoseDimensions& standing() const noexcept { return m_poses.front().second; }
 
     static EntityBody player() {
         EntityBody body({ 
@@ -54,12 +59,23 @@ public:
             PlayerDefaults::eye_height::crawling
         });
 
+        body.set(Poses::Swimming, {
+            PlayerDefaults::width,
+            PlayerDefaults::height::swimming,
+            PlayerDefaults::eye_height::swimming
+        });
+
         return body;
 
     }
 
 private:
-    std::unordered_map<std::string, PoseDimensions> m_poses;
+    const PoseDimensions* find(Identifier pose) const noexcept {
+        for (const auto& entry : m_poses) if (entry.first == pose) return &entry.second;
+        return nullptr;
+    }
+
+    std::vector<std::pair<Identifier, PoseDimensions>> m_poses;
 };
 
 } // namespace voxelspire

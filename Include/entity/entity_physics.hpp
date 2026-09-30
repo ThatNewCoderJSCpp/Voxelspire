@@ -3,7 +3,7 @@
 
 #include <cmath>
 #include <vector>
-#include "../world/world.hpp"
+#include "../world/block_reader.hpp"
 #include "entity.hpp"
 
 namespace voxelspire {
@@ -36,6 +36,39 @@ public:
         return m_settings.air_resistance->terminal_velocity(air_context(e, 0.0, gravity_scale, drag_scale));
     }
 
+    double submerged_fraction(const Entity& e, const World& world) const {
+        const AABB box = e.bounding_box();
+        const double height = box.max.z - box.min.z;
+        if (height <= 0.0) return 0.0;
+        const vector3d center = box.center();
+        const int x = floor_to_int(center.x), y = floor_to_int(center.y);
+        double inside = 0.0;
+
+        for (int z = floor_to_int(box.min.z); z <= floor_to_int(box.max.z - EPS); ++z) {
+            if (!world.traits_at({ x, y, z }).fluid) continue;
+            inside += vmin(box.max.z, z + 1.0) - vmax(box.min.z, static_cast<double>(z));
+        }
+
+        return vclamp(inside / height, 0.0, 1.0);
+    }
+
+    double buoyancy_scale(double submerged) const noexcept { return vmax(0.0, 1.0 - vclamp(m_settings.fluid_buoyancy, 0.0, 1.0) * submerged); }
+
+    void apply_fluid(Entity& e, double submerged, double free_horizontal, double free_up, double free_down, double dt) const {
+        FluidContext ctx;
+        ctx.dt        = dt;
+        ctx.submerged = submerged;
+        if (ctx.submerged <= 0.0) return;
+        free_down = vmin(free_down, m_settings.fluid_sink_speed);
+        const AABB box = e.bounding_box();
+        ctx.width  = box.max.x - box.min.x;
+        ctx.height = box.max.z - box.min.z;
+        ctx.free_speed_horizontal = free_horizontal;
+        ctx.free_speed_up         = free_up;
+        ctx.free_speed_down       = free_down;
+        e.set_velocity(m_settings.fluid_resistance->apply(e.velocity(), ctx));
+    }
+
     double ground_distance(const Entity& e, const World& world, double max_depth) {
         const AABB box = e.bounding_box();
         const double feet = box.min.z;
@@ -62,15 +95,16 @@ public:
         const double largest = vmax(std::fabs(delta.x), vmax(std::fabs(delta.y), std::fabs(delta.z)));
         const int steps = vmax(1, static_cast<int>(std::ceil(largest / MAX_STEP)));
         const vector3d d = delta / static_cast<double>(steps);
-
         const double start_z = e.position().z;
+        const AABB start = e.bounding_box();
+        gather(world, start.united(start.translated(delta)).inflated(SWEEP_MARGIN));
 
         for (int i = 0; i < steps; ++i) {
             const double want_z = d.z;
-            const double got_z = move_axis(e, world, 2, want_z);
+            const double got_z = move_axis(e, 2, want_z);
             if (got_z != want_z) { r.hit_z = true; if (want_z < 0.0) r.landed = true; }
-            if (move_axis(e, world, 0, d.x) != d.x) r.hit_x = true;
-            if (move_axis(e, world, 1, d.y) != d.y) r.hit_y = true;
+            if (move_axis(e, 0, d.x) != d.x) r.hit_x = true;
+            if (move_axis(e, 1, d.y) != d.y) r.hit_y = true;
         }
 
         vector3d v = e.velocity();
@@ -96,19 +130,16 @@ private:
     static constexpr double MAX_STEP     = 0.45;
     static constexpr double EPS          = 1e-7;
     static constexpr double GROUND_PROBE = 0.01;
+    static constexpr double SWEEP_MARGIN = 1e-3;
 
     static void track_fall(Entity& e, double moved_z) noexcept {
         if (e.on_ground() || moved_z > 0.0) { e.set_fall_distance(0.0); return; }
         e.set_fall_distance(e.fall_distance() - moved_z);
     }
 
-    double move_axis(Entity& e, const World& world, int axis, double d) {
+    double move_axis(Entity& e, int axis, double d) {
         if (d == 0.0) return 0.0;
         const AABB box = e.bounding_box();
-        vector3d shift{};
-        set_component(shift, axis, d);
-        gather(world, box.united(box.translated(shift)));
-
         double allowed = d;
         for (const AABB& b : m_boxes) {
             bool overlaps_others = true;
@@ -135,13 +166,16 @@ private:
         const int y0 = floor_to_int(region.min.y - EPS), y1 = floor_to_int(region.max.y + EPS);
         const int z0 = floor_to_int(region.min.z - EPS), z1 = floor_to_int(region.max.z + EPS);
 
+        BlockReader reader(world);
+        const BlockRegistry& blocks = world.blocks();
+
         for (int y = y0; y <= y1; ++y)
         for (int z = z0; z <= z1; ++z)
         for (int x = x0; x <= x1; ++x) {
             const BlockPos p{ x, y, z };
             if (!world.in_horizontal_bounds(p)) { m_boxes.push_back(AABB::unit_block(p)); continue; }
-            const Block& b = world.block_at(p);
-            if (b.is_solid()) m_boxes.push_back(b.collision_box(p));
+            const BlockId id = reader.id_at(p);
+            if (blocks.traits(id).solid) m_boxes.push_back(reader.collision_box(p, id));
         }
     }
 

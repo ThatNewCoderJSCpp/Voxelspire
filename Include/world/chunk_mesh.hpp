@@ -1,202 +1,352 @@
-#ifndef VOXELSPIRE_RENDER_CHUNK_MESH_HPP
-#define VOXELSPIRE_RENDER_CHUNK_MESH_HPP
+#ifndef VOXELSPIRE_WORLD_CHUNK_MESH_HPP
+#define VOXELSPIRE_WORLD_CHUNK_MESH_HPP
 
 #include <array>
-#include <unordered_map>
-#include "../world/world.hpp"
+#include <bitset>
+#include <cstring>
+#include <memory>
+#include <vector>
+#include "../render/greedy_mesher.hpp"
+#include "world.hpp"
 
 namespace voxelspire {
 
-struct FaceShading {
-    double up = 1.0, down = 0.5, north_south = 0.8, east_west = 0.62;
+struct ChunkSnapshot {
+    static constexpr int N      = Chunk::SIZE + 2;
+    static constexpr int VOLUME = N * N * N;
 
-    double factor(Face f) const noexcept {
-        switch (f) {
-            case Face::Up:    return up;
-            case Face::Down:  return down;
-            case Face::North:
-            case Face::South: return north_south;
-            default:          return east_west;
-        }
+    ChunkPos      pos;
+    std::uint64_t revision = 0;
+    bool          has_floor = false;
+    bool          has_light = false;
+    std::array<std::int32_t, ChunkColumn::AREA> floor{};
+    std::array<BlockId, VOLUME> ids{};
+    std::array<std::uint16_t, LightBox::VOLUME> light{};
+
+    static_assert(LightBox::N == N, "the light box must cover the same cells as the snapshot");
+
+    static constexpr std::size_t index(int x, int y, int z) noexcept {
+        return static_cast<std::size_t>(((y + 1) * N + (z + 1)) * N + (x + 1));
     }
 
-    static Color apply(const Color& c, double k) noexcept {
-        auto ch = [k](std::uint8_t v) { return static_cast<std::uint8_t>(vclamp(v * k, 0.0, 255.0)); };
-        return Color(ch(c.red()), ch(c.green()), ch(c.blue()), c.alpha());
+    BlockId at(int x, int y, int z) const noexcept { return ids[index(x, y, z)]; }
+    std::uint16_t light_at(int x, int y, int z) const noexcept { return has_light ? light[index(x, y, z)] : PackedLight::OPEN_SKY; }
+    BlockPos origin() const noexcept { return { pos.x * Chunk::SIZE, pos.y * Chunk::SIZE, pos.z * Chunk::SIZE }; }
+
+    static std::unique_ptr<ChunkSnapshot> capture(const World& world, const Chunk& chunk) {
+        constexpr int S = Chunk::SIZE;
+        auto snap = std::make_unique<ChunkSnapshot>();
+        snap->pos = chunk.pos();
+        snap->revision = chunk.revision();
+        snap->ids.fill(AIR_ID);
+        const BlockId* src = chunk.data();
+
+        for (int y = 0; y < S; ++y)
+            for (int z = 0; z < S; ++z)
+                std::memcpy(&snap->ids[index(0, y, z)], &src[Chunk::index(0, y, z)], sizeof(BlockId) * S);
+
+        const ChunkPos p = chunk.pos();
+
+        if (const Chunk* c = world.chunk_at({ p.x - 1, p.y, p.z })) for (int y = 0; y < S; ++y) for (int z = 0; z < S; ++z) snap->ids[index(-1, y, z)] = c->get(S - 1, y, z);
+        if (const Chunk* c = world.chunk_at({ p.x + 1, p.y, p.z })) for (int y = 0; y < S; ++y) for (int z = 0; z < S; ++z) snap->ids[index(S, y, z)] = c->get(0, y, z);
+        if (const Chunk* c = world.chunk_at({ p.x, p.y - 1, p.z })) for (int x = 0; x < S; ++x) for (int z = 0; z < S; ++z) snap->ids[index(x, -1, z)] = c->get(x, S - 1, z);
+        if (const Chunk* c = world.chunk_at({ p.x, p.y + 1, p.z })) for (int x = 0; x < S; ++x) for (int z = 0; z < S; ++z) snap->ids[index(x, S, z)] = c->get(x, 0, z);
+        if (const Chunk* c = world.chunk_at({ p.x, p.y, p.z - 1 })) for (int x = 0; x < S; ++x) for (int y = 0; y < S; ++y) snap->ids[index(x, y, -1)] = c->get(x, y, S - 1);
+        if (const Chunk* c = world.chunk_at({ p.x, p.y, p.z + 1 })) for (int x = 0; x < S; ++x) for (int y = 0; y < S; ++y) snap->ids[index(x, y, S)] = c->get(x, y, 0);
+
+        if (const ChunkColumn* col = world.column(World::column_of(p))) {
+            snap->has_floor = true;
+            snap->floor = col->floor;
+        }
+
+        if (const LightEngine* light = world.lighting()) {
+            snap->has_light = true;
+            light->sample_box(p, snap->light.data());
+        }
+
+        return snap;
     }
 };
 
-inline void face_corners(const vector3d& lo, const vector3d& hi, Face f, std::array<vector3d, 4>& out) noexcept {
-    const double x0 = lo.x, y0 = lo.y, z0 = lo.z, x1 = hi.x, y1 = hi.y, z1 = hi.z;
-    switch (f) {
-        case Face::West:  out = { vector3d{x0,y1,z0}, vector3d{x0,y0,z0}, vector3d{x0,y0,z1}, vector3d{x0,y1,z1} }; break;
-        case Face::East:  out = { vector3d{x1,y0,z0}, vector3d{x1,y1,z0}, vector3d{x1,y1,z1}, vector3d{x1,y0,z1} }; break;
-        case Face::South: out = { vector3d{x0,y0,z0}, vector3d{x1,y0,z0}, vector3d{x1,y0,z1}, vector3d{x0,y0,z1} }; break;
-        case Face::North: out = { vector3d{x1,y1,z0}, vector3d{x0,y1,z0}, vector3d{x0,y1,z1}, vector3d{x1,y1,z1} }; break;
-        case Face::Down:  out = { vector3d{x0,y1,z0}, vector3d{x1,y1,z0}, vector3d{x1,y0,z0}, vector3d{x0,y0,z0} }; break;
-        case Face::Up:    out = { vector3d{x0,y0,z1}, vector3d{x1,y0,z1}, vector3d{x1,y1,z1}, vector3d{x0,y1,z1} }; break;
-    }
-}
+struct ChunkConnectivity {
+    static constexpr std::uint64_t ALL = (std::uint64_t(1) << (FACE_COUNT * FACE_COUNT)) - 1;
 
-inline void face_corners(const BlockPos& p, Face f, std::array<vector3d, 4>& out) noexcept {
-    face_corners(p.min_corner(), p.min_corner() + vector3d{ 1.0, 1.0, 1.0 }, f, out);
-}
+    std::uint64_t bits = ALL;
+
+    bool connected(Face a, Face b) const noexcept { return (bits >> (static_cast<int>(a) * FACE_COUNT + static_cast<int>(b))) & 1u; }
+
+    void connect(Face a, Face b) noexcept {
+        bits |= std::uint64_t(1) << (static_cast<int>(a) * FACE_COUNT + static_cast<int>(b));
+        bits |= std::uint64_t(1) << (static_cast<int>(b) * FACE_COUNT + static_cast<int>(a));
+    }
+
+    static ChunkConnectivity compute(const ChunkSnapshot& snap, const BlockRegistry& reg) {
+        const BlockTraits* traits = reg.traits_table();
+        constexpr int S = Chunk::SIZE;
+        constexpr int V = Chunk::VOLUME;
+        ChunkConnectivity out;
+        out.bits = 0;
+        std::bitset<V> open, seen;
+        int open_count = 0;
+
+        for (int y = 0; y < S; ++y)
+            for (int z = 0; z < S; ++z)
+                for (int x = 0; x < S; ++x)
+                    if (!traits[snap.at(x, y, z)].opaque) { open.set(Chunk::index(x, y, z)); ++open_count; }
+
+        if (open_count == V) { out.bits = ALL; return out; }
+        if (open_count == 0) return out;
+
+        std::vector<int> stack;
+        stack.reserve(V);
+
+        for (int start = 0; start < V; ++start) {
+            if (!open.test(static_cast<std::size_t>(start)) || seen.test(static_cast<std::size_t>(start))) continue;
+            unsigned int touched = 0;
+            stack.clear();
+            stack.push_back(start);
+            seen.set(static_cast<std::size_t>(start));
+
+            while (!stack.empty()) {
+                const int i = stack.back();
+                stack.pop_back();
+                const int x = i % S, z = (i / S) % S, y = i / (S * S);
+                if (x == 0) touched |= 1u << static_cast<int>(Face::West);
+                if (x == S - 1) touched |= 1u << static_cast<int>(Face::East);
+                if (y == 0) touched |= 1u << static_cast<int>(Face::South);
+                if (y == S - 1) touched |= 1u << static_cast<int>(Face::North);
+                if (z == 0) touched |= 1u << static_cast<int>(Face::Down);
+                if (z == S - 1) touched |= 1u << static_cast<int>(Face::Up);
+
+                for (Face f : ALL_FACES) {
+                    const BlockPos o = face_offset(f);
+                    const int nx = x + o.x, ny = y + o.y, nz = z + o.z;
+                    if (!Chunk::in_bounds(nx, ny, nz)) continue;
+                    const int n = static_cast<int>(Chunk::index(nx, ny, nz));
+                    if (!open.test(static_cast<std::size_t>(n)) || seen.test(static_cast<std::size_t>(n))) continue;
+                    seen.set(static_cast<std::size_t>(n));
+                    stack.push_back(n);
+                }
+            }
+
+            for (Face a : ALL_FACES)
+                for (Face b : ALL_FACES)
+                    if ((touched >> static_cast<int>(a) & 1u) && (touched >> static_cast<int>(b) & 1u)) out.connect(a, b);
+
+            if (out.bits == ALL) break;
+        }
+
+        return out;
+    }
+};
 
 struct ChunkMeshOptions {
-    bool merge_faces = true;
+    bool        merge_faces       = true;
+    bool        cull_void_faces   = true;
+    bool        smooth_lighting   = true;
+    double      ambient_occlusion = 1.0;
+    double      occlusion_step    = 0.2;
+    FaceShading shading;
+
+    bool operator==(const ChunkMeshOptions& o) const noexcept {
+        return merge_faces == o.merge_faces && cull_void_faces == o.cull_void_faces && smooth_lighting == o.smooth_lighting
+            && ambient_occlusion == o.ambient_occlusion && occlusion_step == o.occlusion_step
+            && shading.strength == o.shading.strength && shading.factors.up == o.shading.factors.up
+            && shading.factors.down == o.shading.factors.down && shading.factors.north_south == o.shading.factors.north_south
+            && shading.factors.east_west == o.shading.factors.east_west;
+    }
+
+    bool operator!=(const ChunkMeshOptions& o) const noexcept { return !(*this == o); }
 };
 
-class ChunkMesh {
+struct ChunkMeshData {
+    ChunkPos                    pos;
+    std::uint64_t               revision = 0;
+    fizmo::graphics::QuadMesh3D quads;
+    fizmo::graphics::QuadMesh3D translucent;
+    std::size_t                 faces = 0;
+    ChunkConnectivity           connectivity;
+};
+
+class ChunkMesher {
 public:
-    void build(const World& world, const Chunk& chunk, const FaceShading& shading, const ChunkMeshOptions& options = ChunkMeshOptions{}) {
-        m_mesh.clear();
-        m_faces = 0;
-        m_quads = 0;
-        m_bounds = AABB(chunk.origin().min_corner(),
-                        chunk.origin().min_corner() + vector3d{ double(Chunk::SIZE), double(Chunk::SIZE), double(Chunk::SIZE) });
-        m_origin = chunk.origin().min_corner();
-        m_revision = chunk.revision();
+    explicit ChunkMesher(const BlockRegistry& registry) : m_registry(registry) { build_corner_table(); }
 
-        if (!chunk.empty()) {
-            for (Face f : ALL_FACES) build_direction(world, chunk, shading, options, f);
-        }
+    ChunkMeshData build(const ChunkSnapshot& snap, const ChunkMeshOptions& options) {
+        ChunkMeshData out;
+        out.pos = snap.pos;
+        out.revision = snap.revision;
+        const int dims[3] = { Chunk::SIZE, Chunk::SIZE, Chunk::SIZE };
+        const BlockPos origin = snap.origin();
+        const vector3d zero{ 0.0, 0.0, 0.0 }, unit{ 1.0, 1.0, 1.0 };
 
-        m_mesh.edit_vertices().shrink_to_fit();
-        m_mesh.edit_indices().shrink_to_fit();
+        const BlockTraits* traits = m_registry.traits_table();
+
+        const bool occlusion = options.ambient_occlusion > 0.0;
+        const bool smooth = options.smooth_lighting && snap.has_light;
+        std::array<double, OCCLUSION_LEVELS> occlusion_factor{};
+        for (int k = 0; k < OCCLUSION_LEVELS; ++k) occlusion_factor[static_cast<std::size_t>(k)] = vmax(0.0, 1.0 - options.ambient_occlusion * options.occlusion_step * k);
+
+        auto key_at = [&](Face f, int x, int y, int z) -> FaceCell {
+            FaceCell cell;
+            const BlockId id = snap.at(x, y, z);
+            const BlockTraits& t = traits[id];
+            if (!t.visible || !t.full_cube) return cell;
+            const BlockPos o = face_offset(f);
+            const int ax = x + o.x, ay = y + o.y, az = z + o.z;
+            const BlockId nid = snap.at(ax, ay, az);
+            if (!BlockTraits::face_visible(id, t, nid, traits[nid])) return cell;
+            if (f == Face::Down && options.cull_void_faces && snap.has_floor && origin.z + z == snap.floor[ChunkColumn::cell(x, y)]) return cell;
+            cell.key = face_key(id, f, options.shading);
+            const std::uint8_t shade = FaceKey::shade(cell.key);
+            const std::uint16_t flat = snap.light_at(ax, ay, az);
+
+            for (int k = 0; k < FaceCell::CORNERS; ++k) {
+                const CornerSamples& cs = m_corners[static_cast<std::size_t>(f)][static_cast<std::size_t>(k)];
+                const bool side_a = traits[snap.at(ax + cs.a.x, ay + cs.a.y, az + cs.a.z)].opaque;
+                const bool side_b = traits[snap.at(ax + cs.b.x, ay + cs.b.y, az + cs.b.z)].opaque;
+                const bool corner = !(side_a && side_b) && traits[snap.at(ax + cs.c.x, ay + cs.c.y, az + cs.c.z)].opaque;
+                const int blocked = side_a && side_b ? OCCLUSION_LEVELS - 1 : int(side_a) + int(side_b) + int(corner);
+                const double shade_k = occlusion ? shade * occlusion_factor[static_cast<std::size_t>(blocked)] : shade;
+                cell.shade[static_cast<std::size_t>(k)] = static_cast<std::uint8_t>(vclamp(std::lround(shade_k), 0L, 255L));
+
+                LightSum sum;
+                sum.add(flat);
+
+                if (smooth) {
+                    if (!side_a) sum.add(snap.light_at(ax + cs.a.x, ay + cs.a.y, az + cs.a.z));
+                    if (!side_b) sum.add(snap.light_at(ax + cs.b.x, ay + cs.b.y, az + cs.b.z));
+                    if (!side_a || !side_b) if (!corner) sum.add(snap.light_at(ax + cs.c.x, ay + cs.c.y, az + cs.c.z));
+                }
+
+                cell.light[static_cast<std::size_t>(k)] = sum.baked(t.emission);
+            }
+
+            return cell;
+        };
+
+        out.faces = m_greedy.mesh(dims, options.merge_faces, key_at, [&](const GreedyRect& r) {
+            emit_scaled_quad(FaceKey::translucent(r.key) ? out.translucent : out.quads, r, zero, unit);
+        });
+
+        out.faces += emit_shaped(snap, options, traits, out);
+        out.quads.finalize();
+        out.translucent.finalize();
+        out.connectivity = ChunkConnectivity::compute(snap, m_registry);
+        return out;
     }
-
-    const fizmo::graphics::Mesh3D& mesh() const noexcept { return m_mesh; }
-    std::size_t   face_count() const noexcept { return m_faces; }
-    std::size_t   quad_count() const noexcept { return m_quads; }
-    const AABB&   bounds()     const noexcept { return m_bounds; }
-    const vector3d& origin()   const noexcept { return m_origin; }
-    std::uint64_t revision()   const noexcept { return m_revision; }
 
 private:
-    static constexpr int           AREA    = Chunk::SIZE * Chunk::SIZE;
-    static constexpr std::uint64_t NO_FACE = 0;
-    static constexpr std::uint64_t HAS_FACE = std::uint64_t(1) << 32;
+    static constexpr int    OCCLUSION_LEVELS = 4;
+    static constexpr double CELL_MIDPOINT    = 0.5;
 
-    static BlockPos local(int a, int d, int u, int i, int v, int j) noexcept {
-        int p[3];
-        p[a] = d; p[u] = i; p[v] = j;
-        return { p[0], p[1], p[2] };
-    }
+    struct CornerSamples { BlockPos a, b, c; };
 
-    static std::uint64_t face_key(const World& world, const Chunk& chunk, const FaceShading& shading, Face f, const BlockPos& l) {
-        const BlockRegistry& reg = world.blocks();
-        const Block& block = reg.get(chunk.get(l.x, l.y, l.z));
-        if (!block.is_visible()) return NO_FACE;
-        const BlockPos o = face_offset(f);
-        const BlockPos n = l + o;
-        const BlockPos pos = chunk.origin() + l;
-        const BlockId nid = Chunk::in_bounds(n.x, n.y, n.z) ? chunk.get(n.x, n.y, n.z) : world.block_id_at(pos + o);
-        if (!block.is_face_visible_against(reg.get(nid))) return NO_FACE;
-        const Color col = FaceShading::apply(block.face_color(f, pos), shading.factor(f));
-        return HAS_FACE | fizmo::graphics::Vertex3D::pack(col);
-    }
-
-    static Color unpack(std::uint64_t key) noexcept {
-        const auto c = static_cast<std::uint32_t>(key);
-        return Color(static_cast<std::uint8_t>(c), static_cast<std::uint8_t>(c >> 8),
-                     static_cast<std::uint8_t>(c >> 16), static_cast<std::uint8_t>(c >> 24));
-    }
-
-    void build_direction(const World& world, const Chunk& chunk, const FaceShading& shading, const ChunkMeshOptions& options, Face f) {
+    std::size_t emit_shaped(const ChunkSnapshot& snap, const ChunkMeshOptions& options, const BlockTraits* traits, ChunkMeshData& out) {
         constexpr int S = Chunk::SIZE;
-        const int a = face_axis(f), u = (a + 1) % 3, v = (a + 2) % 3;
-        std::array<std::uint64_t, AREA> mask;
+        std::size_t faces = 0;
 
-        for (int d = 0; d < S; ++d) {
-            for (int j = 0; j < S; ++j)
-                for (int i = 0; i < S; ++i)
-                    mask[j * S + i] = face_key(world, chunk, shading, f, local(a, d, u, i, v, j));
+        for (int y = 0; y < S; ++y)
+            for (int z = 0; z < S; ++z)
+                for (int x = 0; x < S; ++x) {
+                    const BlockId id = snap.at(x, y, z);
+                    const BlockTraits& t = traits[id];
+                    if (!t.visible || t.full_cube) continue;
+                    const vector3d lo = vector3d{ double(x), double(y), double(z) } + t.shape.min;
+                    const vector3d hi = vector3d{ double(x), double(y), double(z) } + t.shape.max;
 
-            for (int j = 0; j < S; ++j) {
-                for (int i = 0; i < S;) {
-                    const std::uint64_t key = mask[j * S + i];
-                    if (key == NO_FACE) { ++i; continue; }
+                    for (Face f : ALL_FACES) {
+                        std::uint16_t light = snap.light_at(x, y, z);
 
-                    int w = 1, h = 1;
-
-                    if (options.merge_faces) {
-                        while (i + w < S && mask[j * S + i + w] == key) ++w;
-
-                        for (bool grow = true; grow && j + h < S;) {
-                            for (int k = 0; k < w; ++k) if (mask[(j + h) * S + i + k] != key) { grow = false; break; }
-                            if (grow) ++h;
+                        if (t.shape.touches(f)) {
+                            const BlockPos o = face_offset(f);
+                            const BlockId nid = snap.at(x + o.x, y + o.y, z + o.z);
+                            if (!BlockTraits::face_visible(id, t, nid, traits[nid])) continue;
+                            light = snap.light_at(x + o.x, y + o.y, z + o.z);
                         }
+
+                        LightSum sum;
+                        sum.add(light);
+                        const std::uint64_t key = face_key(id, f, options.shading);
+                        emit_box_face(FaceKey::translucent(key) ? out.translucent : out.quads, lo, hi, f, key, sum.baked(t.emission));
+                        ++faces;
                     }
-
-                    for (int y = 0; y < h; ++y)
-                        for (int x = 0; x < w; ++x)
-                            mask[(j + y) * S + i + x] = NO_FACE;
-
-                    emit(f, local(a, d, u, i, v, j), a, u, w, v, h, unpack(key));
-                    m_faces += static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
-                    i += w;
                 }
+
+        return faces;
+    }
+
+    static void emit_box_face(fizmo::graphics::QuadMesh3D& mesh, const vector3d& lo, const vector3d& hi, Face f, std::uint64_t key, std::uint32_t light) {
+        std::array<vector3d, 4> c;
+        face_corners(lo, hi, f, c);
+        using V = fizmo::graphics::CompactVertex3D;
+        const Color col = FaceKey::color(key);
+        const auto cf = static_cast<fizmo::graphics::CellFace>(f);
+        const std::uint8_t var = FaceKey::variation(key), flags = FaceKey::vertex_flags(key), shade = FaceKey::shade(key);
+        const fizmo::graphics::BakedLight baked = fizmo::graphics::BakedLight::unpack(light);
+        auto vertex = [&](int k) { return V(c[static_cast<std::size_t>(k)], col, cf, shade, var, flags, baked); };
+        mesh.add_quad(vertex(0), vertex(1), vertex(2), vertex(3));
+    }
+
+    struct LightSum {
+        int sky = 0, red = 0, green = 0, blue = 0, count = 0;
+
+        void add(std::uint16_t v) noexcept {
+            sky   += PackedLight::sky(v);
+            red   += PackedLight::channel(v, 0);
+            green += PackedLight::channel(v, 1);
+            blue  += PackedLight::channel(v, 2);
+            ++count;
+        }
+
+        std::uint32_t baked(const LightEmission& own) const noexcept {
+            auto scale = [this](int total, int floor_level) {
+                const int avg = (total * LightLevel::BYTE_SCALE + count / 2) / count;
+                return static_cast<std::uint8_t>(vmax(avg, floor_level * LightLevel::BYTE_SCALE));
+            };
+            return fizmo::graphics::BakedLight(scale(red, own.red), scale(green, own.green), scale(blue, own.blue), scale(sky, 0)).packed();
+        }
+    };
+
+    void build_corner_table() {
+        for (Face f : ALL_FACES) {
+            std::array<vector3d, 4> corners;
+            face_corners(vector3d{ 0.0, 0.0, 0.0 }, vector3d{ 1.0, 1.0, 1.0 }, f, corners);
+            const int a = face_axis(f), u = (a + 1) % 3, v = (a + 2) % 3;
+
+            for (int k = 0; k < FaceCell::CORNERS; ++k) {
+                const vector3d& p = corners[static_cast<std::size_t>(k)];
+                int du[3] = { 0, 0, 0 }, dv[3] = { 0, 0, 0 };
+                du[u] = component(p, u) > CELL_MIDPOINT ? 1 : -1;
+                dv[v] = component(p, v) > CELL_MIDPOINT ? 1 : -1;
+                CornerSamples& cs = m_corners[static_cast<std::size_t>(f)][static_cast<std::size_t>(k)];
+                cs.a = { du[0], du[1], du[2] };
+                cs.b = { dv[0], dv[1], dv[2] };
+                cs.c = { du[0] + dv[0], du[1] + dv[1], du[2] + dv[2] };
             }
         }
     }
 
-    void emit(Face f, const BlockPos& start, int a, int u, int w, int v, int h, const Color& col) {
-        double size[3];
-        size[a] = 1.0; size[u] = w; size[v] = h;
-        const vector3d lo = start.min_corner();
-        std::array<vector3d, 4> c;
-        face_corners(lo, lo + vector3d{ size[0], size[1], size[2] }, f, c);
-        m_mesh.add_quad(fizmo::graphics::Vertex3D(c[0], col), fizmo::graphics::Vertex3D(c[1], col),
-                        fizmo::graphics::Vertex3D(c[2], col), fizmo::graphics::Vertex3D(c[3], col));
-        ++m_quads;
-    }
+    std::uint64_t face_key(BlockId id, Face f, const FaceShading& shading) {
+        if (id >= m_keys.size()) m_keys.resize(static_cast<std::size_t>(id) + 1, {});
+        auto& row = m_keys[id];
+        std::uint64_t& k = row[static_cast<std::size_t>(f)];
 
-    fizmo::graphics::Mesh3D m_mesh;
-    std::size_t             m_faces = 0;
-    std::size_t             m_quads = 0;
-    AABB                    m_bounds;
-    vector3d                m_origin{};
-    std::uint64_t           m_revision = 0;
-};
-
-class ChunkMeshCache {
-public:
-    std::size_t update(World& world) {
-        std::size_t rebuilt = 0;
-
-        for (auto& kv : world.chunks()) {
-            Chunk& chunk = *kv.second;
-            auto it = m_meshes.find(kv.first);
-            if (it != m_meshes.end() && !chunk.mesh_dirty()) continue;
-            m_meshes[kv.first].build(world, chunk, m_shading, m_options);
-            chunk.clear_mesh_dirty();
-            ++rebuilt;
+        if (k == FaceKey::NONE) {
+            const BlockTraits& t = m_registry.traits(id);
+            const FaceAppearance& a = t.face(f);
+            k = FaceKey::make(a.base, a.variation, shading.level(f), t.layer == RenderLayer::Translucent, a.plain ? 0 : FaceKey::finish_flags(t.finish));
         }
 
-        for (auto it = m_meshes.begin(); it != m_meshes.end();) {
-            if (!world.chunk_at(it->first)) it = m_meshes.erase(it); else ++it;
-        }
-
-        m_total_faces = 0;
-        m_total_quads = 0;
-        for (const auto& kv : m_meshes) { m_total_faces += kv.second.face_count(); m_total_quads += kv.second.quad_count(); }
-        return rebuilt;
+        return k;
     }
 
-    const std::unordered_map<ChunkPos, ChunkMesh, ChunkPosHash>& meshes() const noexcept { return m_meshes; }
-    std::size_t total_faces() const noexcept { return m_total_faces; }
-    std::size_t total_quads() const noexcept { return m_total_quads; }
-    FaceShading& shading() noexcept { return m_shading; }
-    ChunkMeshOptions& options() noexcept { return m_options; }
-
-private:
-    std::unordered_map<ChunkPos, ChunkMesh, ChunkPosHash> m_meshes;
-    std::size_t m_total_faces = 0;
-    std::size_t m_total_quads = 0;
-    FaceShading      m_shading;
-    ChunkMeshOptions m_options;
+    const BlockRegistry&                            m_registry;
+    GreedyMesher                                    m_greedy;
+    std::array<std::array<CornerSamples, FaceCell::CORNERS>, FACE_COUNT> m_corners{};
+    std::vector<std::array<std::uint64_t, FACE_COUNT>> m_keys;
 };
 
 } // namespace voxelspire
 
-#endif // VOXELSPIRE_RENDER_CHUNK_MESH_HPP
+#endif // VOXELSPIRE_WORLD_CHUNK_MESH_HPP

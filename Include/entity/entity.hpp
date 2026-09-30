@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include "../core/types.hpp"
+#include "../lighting/dynamic_light.hpp"
 #include "../physics/aerodynamics.hpp"
 
 namespace voxelspire {
@@ -15,11 +16,20 @@ class EntityManager;
 using EntityId = std::uint64_t;
 constexpr EntityId NO_ENTITY = 0;
 
+struct SimulationArea {
+    vector3d center{};
+    double   radius = 0.0;
+    const World* world = nullptr;
+
+    bool contains(const vector3d& p) const noexcept;
+};
+
 struct TickContext {
-    World&         world;
-    EntityPhysics& physics;
-    EntityManager& entities;
-    double         dt;
+    World&                world;
+    EntityPhysics&        physics;
+    EntityManager&        entities;
+    double                dt;
+    const SimulationArea* simulation = nullptr;
 };
 
 struct EntityCollision {
@@ -36,9 +46,11 @@ public:
     virtual void tick(TickContext& ctx) = 0;
     virtual void on_touch(Entity&, TickContext&) {}
     virtual bool despawns_in_void() const noexcept { return true; }
+    virtual bool emits_light(DynamicLight& /*out*/, double /*alpha*/) const { return false; }
 
-    EntityId id()      const noexcept { return m_id; }
-    bool     removed() const noexcept { return m_removed; }
+    EntityId id()        const noexcept { return m_id; }
+    bool     removed()   const noexcept { return m_removed; }
+    bool     simulated() const noexcept { return m_simulated; }
 
     const EntityCollision& collision() const noexcept { return m_collision; }
     void set_collision(const EntityCollision& c) noexcept { m_collision = c; }
@@ -115,6 +127,7 @@ private:
     friend class EntityManager;
     EntityId m_id      = NO_ENTITY;
     bool     m_removed = false;
+    bool     m_simulated = true;
 };
 
 } // namespace voxelspire

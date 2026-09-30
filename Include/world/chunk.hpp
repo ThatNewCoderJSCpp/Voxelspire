@@ -19,6 +19,18 @@ struct ChunkPosHash {
     std::size_t operator()(const ChunkPos& p) const noexcept { return BlockPosHash{}(BlockPos{ p.x, p.y, p.z }); }
 };
 
+struct ColumnPos {
+    int x = 0, y = 0;
+    constexpr bool operator==(const ColumnPos& o) const noexcept { return x == o.x && y == o.y; }
+    constexpr bool operator!=(const ColumnPos& o) const noexcept { return !(*this == o); }
+};
+
+struct ColumnPosHash {
+    std::size_t operator()(const ColumnPos& p) const noexcept {
+        return static_cast<std::size_t>((static_cast<std::uint64_t>(static_cast<std::uint32_t>(p.x)) << 32) ^ static_cast<std::uint32_t>(p.y) * 0x9E3779B1u);
+    }
+};
+
 class Chunk {
 public:
     static constexpr int SIZE   = EngineLimits::CHUNK_SIZE;
@@ -41,28 +53,55 @@ public:
         if (cell == AIR_ID) ++m_non_air;
         if (id == AIR_ID)   --m_non_air;
         cell = id;
-        mark_mesh_dirty();
+        m_modified = true;
+        ++m_revision;
         return true;
+    }
+
+    std::size_t fill(int x0, int x1, int y0, int y1, int z0, int z1, BlockId id) noexcept {
+        x0 = vclamp(x0, 0, SIZE); x1 = vclamp(x1, 0, SIZE);
+        y0 = vclamp(y0, 0, SIZE); y1 = vclamp(y1, 0, SIZE);
+        z0 = vclamp(z0, 0, SIZE); z1 = vclamp(z1, 0, SIZE);
+        std::size_t changed = 0;
+
+        for (int ly = y0; ly < y1; ++ly)
+            for (int lz = z0; lz < z1; ++lz) {
+                BlockId* row = &m_blocks[index(0, ly, lz)];
+
+                for (int lx = x0; lx < x1; ++lx) {
+                    BlockId& cell = row[lx];
+                    if (cell == id) continue;
+                    if (cell == AIR_ID) ++m_non_air;
+                    if (id == AIR_ID)   --m_non_air;
+                    cell = id;
+                    ++changed;
+                }
+            }
+
+        if (changed) { m_modified = true; ++m_revision; }
+        return changed;
+    }
+
+    bool modified() const noexcept { return m_modified; }
+    void mark_pristine() noexcept { m_modified = false; }
+
+    const BlockId* data() const noexcept { return m_blocks.data(); }
+
+    static constexpr std::size_t index(int lx, int ly, int lz) noexcept {
+        return static_cast<std::size_t>((ly * SIZE + lz) * SIZE + lx);
     }
 
     bool         empty()          const noexcept { return m_non_air == 0; }
     std::size_t  non_air_count()  const noexcept { return m_non_air; }
 
-    bool mesh_dirty() const noexcept { return m_mesh_dirty; }
-    void mark_mesh_dirty() noexcept  { m_mesh_dirty = true; ++m_revision; }
-    void clear_mesh_dirty() noexcept { m_mesh_dirty = false; }
     std::uint64_t revision() const noexcept { return m_revision; }
 
 private:
-    static constexpr std::size_t index(int lx, int ly, int lz) noexcept {
-        return static_cast<std::size_t>((ly * SIZE + lz) * SIZE + lx);
-    }
-
-    ChunkPos                         m_pos;
-    std::array<BlockId, VOLUME>      m_blocks{};
-    std::size_t                      m_non_air   = 0;
-    bool                             m_mesh_dirty = true;
-    std::uint64_t                    m_revision   = 0;
+    ChunkPos                    m_pos;
+    std::array<BlockId, VOLUME> m_blocks{};
+    std::size_t                 m_non_air   = 0;
+    bool                        m_modified  = false;
+    std::uint64_t               m_revision  = 0;
 };
 
 } // namespace voxelspire

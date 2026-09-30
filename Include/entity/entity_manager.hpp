@@ -16,6 +16,12 @@
 
 namespace voxelspire {
 
+inline bool SimulationArea::contains(const vector3d& p) const noexcept {
+    const double dx = p.x - center.x, dy = p.y - center.y;
+    if (dx * dx + dy * dy > radius * radius) return false;
+    return !world || world->column_loaded(World::column_of(p));
+}
+
 class EntityManager {
 public:
     using EntityList = std::vector<std::unique_ptr<Entity>>;
@@ -61,7 +67,9 @@ public:
 
         for (std::size_t i = 0; i < count; ++i) {
             Entity& e = *m_entities[i];
-            if (!e.removed()) e.tick(ctx);
+            if (e.removed()) continue;
+            e.m_simulated = !ctx.simulation || ctx.simulation->contains(e.position());
+            if (e.m_simulated) e.tick(ctx);
         }
 
         despawn_fallen(ctx.world);
@@ -92,7 +100,7 @@ public:
         const double half = vmax(size.x, vmax(size.y, size.z)) * 0.5 + m_settings.octree_margin;
         bounds.min = center - vector3d{ half, half, half };
         bounds.max = center + vector3d{ half, half, half };
-        m_tree = fizmo::physics::Octree<Entity>(bounds, m_settings.octree_max_per_node, m_settings.octree_max_depth, m_settings.octree_looseness);
+        m_tree.configure(m_settings.octree_max_per_node, m_settings.octree_max_depth, m_settings.octree_looseness);
         m_tree.rebuild(bounds, m_items.data(), m_boxes.data(), m_items.size());
     }
 
@@ -142,6 +150,7 @@ private:
         
         m_tree.find_pairs([&](Entity* a, Entity* b) {
             if (a->removed() || b->removed()) return;
+            if (!a->simulated() || !b->simulated()) return;
             if (!a->collision().collides_with_entities || !b->collision().collides_with_entities) return;
             if (!a->bounding_box().intersects(b->bounding_box())) return;
             ++m_contacts;
