@@ -52,8 +52,8 @@ struct HudInfo {
     std::size_t   reflection_planes  = 0;
     int           render_distance    = 0;
     double        daylight           = 1.0;
-    
-    std::vector<SortedMesh> m_front;
+        
+    fizmo::windows::GpuTimings gpu;
 };
 
 struct HudMeter {

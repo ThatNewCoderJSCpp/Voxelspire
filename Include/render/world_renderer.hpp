@@ -37,6 +37,13 @@ struct WorldRenderOptions {
     double reflection_distance = 0.0;
 };
 
+struct SortedMesh {
+    double                               distance_sq;
+    const fizmo::graphics::MeshHandle3D* mesh;
+    vector3d                             offset;
+    fizmo::graphics::FaceMask            mask = fizmo::graphics::ALL_FACE_GROUPS;
+};
+
 class WorldRenderer {
 public:
     WorldRenderStats render(
@@ -202,13 +209,6 @@ private:
             m_casters.add(e.opaque, lo);
         }
     }
-
-    struct SortedMesh {
-        double                               distance_sq;
-        const fizmo::graphics::MeshHandle3D* mesh;
-        vector3d                             offset;
-        fizmo::graphics::FaceMask            mask = fizmo::graphics::ALL_FACE_GROUPS;
-    };
 
     static void count_groups(const fizmo::graphics::MeshHandle3D& mesh, fizmo::graphics::FaceMask mask, std::size_t& drawn, std::size_t& skipped) noexcept {
         const auto& groups = mesh.groups();
