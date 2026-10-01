@@ -545,6 +545,7 @@ private:
         p.decimal("Darkness", "How dark shadows are.", l(&L::shadow_strength), LL::shadow_strength);
         p.decimal("Edge blur", "Minimum blur on shadow edges.", l(&L::shadow_softness), LL::shadow_softness).unit("px").decimals(1);
         p.toggle("Soft shadows", "Shadows get blurrier the farther they are from what casts them.", l(&L::soft_shadows));
+        p.decimal("Redraw distance", "How far you can walk before sun shadows are redrawn, as a share of the shadow distance. Higher redraws less often but makes shadows a little blurrier. 0 redraws whenever you move.", l(&L::sun_shadow_redraw), LL::sun_shadow_redraw).decimals(3);
         p.decimal("Sun size for soft shadows", "Bigger makes soft shadows blurrier.", l(&L::soft_shadow_sun_size), LL::soft_shadow_sun_size).unit("deg");
         p.decimal("Max blur", "Largest blur a soft shadow can have.", l(&L::max_shadow_softness), LL::max_shadow_softness).unit("px").decimals(1);
         p.integer("Blur quality", "Samples per side for soft shadows. Higher is smoother but slower.", l(&L::shadow_filter_taps), LL::shadow_filter_taps);
@@ -603,7 +604,8 @@ private:
         p.always().header("Hazy air");
         p.toggle("Volumetric light", "Sunlight lights up the air, so shadows show in the haze.", l(&L::volumetric_light));
         p.when([g] { return g->lighting.volumetric_light; });
-        p.integer("Quality", "Samples along each view ray. Higher is smoother but slower.", l(&L::volumetric_steps), LL::volumetric_steps);
+        p.integer("Quality", "Depth layers in the light volume. Higher is smoother but slower.", l(&L::volumetric_steps), LL::volumetric_steps);
+        p.integer("Cell size", "Screen pixels per light volume cell. Smaller is sharper but slower.", l(&L::volumetric_cell_size), LL::volumetric_cell_size).unit("px");
         p.decimal("Haze density", "How concentrated the haze is near you.", l(&L::volumetric_density), LL::volumetric_density).decimals(3);
         p.decimal("Haze brightness", "How bright the haze is.", l(&L::volumetric_intensity), LL::volumetric_intensity);
         p.decimal("Forward glow", "How much brighter haze is when looking toward the sun.", l(&L::volumetric_anisotropy), LL::volumetric_anisotropy);
@@ -758,6 +760,7 @@ private:
         p.toggle("Crosshair", "The cross in the middle of the screen.", h(&H::show_crosshair));
         p.toggle("Last key", "Show the last key you pressed in the panel.", h(&H::show_last_key));
         p.toggle("Performance section", "FPS, draws and memory.", sec(&HudSections::performance));
+        p.toggle("GPU section", "How long each part of the frame takes on the graphics card.", sec(&HudSections::gpu));
         p.toggle("Player section", "Position, speed and target.", sec(&HudSections::player));
         p.toggle("World section", "Seed, time and loaded world.", sec(&HudSections::world));
         p.toggle("Rendering section", "Chunks, quads and reflections.", sec(&HudSections::rendering));

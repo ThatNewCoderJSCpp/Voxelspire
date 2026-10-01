@@ -53,6 +53,7 @@ struct LightingSettings {
     double       soft_shadow_sun_size         = 1.2;
     double       max_shadow_softness          = 12.0;
     unsigned int shadow_filter_taps           = 4;
+    double       sun_shadow_redraw            = 0.125;
     bool         point_shadows                = false;
     unsigned int max_point_shadows            = 4;
     unsigned int point_shadow_resolution      = 512;
@@ -77,6 +78,7 @@ struct LightingSettings {
     double       volumetric_distance   = 96.0;
     double       volumetric_intensity  = 1.0;
     double       volumetric_near_bias  = 2.0;
+    unsigned int volumetric_cell_size  = 8;
 
     bool         light_shafts          = false;
     unsigned int light_shaft_samples   = 48;
@@ -182,6 +184,7 @@ struct LightingSettings {
         s.ambient_occlusion       = 1.2;
         s.face_shading            = 0.2;
         s.volumetric_steps        = 48;
+        s.volumetric_cell_size    = 6;
         s.volumetric_density      = 0.06;
         s.volumetric_intensity    = 2.0;
         s.light_shaft_samples     = 64;
@@ -228,6 +231,7 @@ struct LightingLimits {
     static constexpr Bounds soft_shadow_sun_size        { 0.1, 5.0 };
     static constexpr Bounds max_shadow_softness         { 1.0, 32.0 };
     static constexpr Bounds shadow_filter_taps          { 1.0, 8.0 };
+    static constexpr Bounds sun_shadow_redraw           { 0.0, 0.5 };
     static constexpr Bounds max_point_shadows           { 0.0, 8.0 };
     static constexpr Bounds point_shadow_fade           { 0.0, 16.0 };
     static constexpr Bounds capsule_shadow_sun_size     { 0.0, 5.0 };
@@ -243,6 +247,7 @@ struct LightingLimits {
     static constexpr Bounds volumetric_distance         { 16.0, 256.0 };
     static constexpr Bounds volumetric_intensity        { 0.0, 5.0 };
     static constexpr Bounds volumetric_near_bias        { 1.0, 4.0 };
+    static constexpr Bounds volumetric_cell_size        { 2.0, 32.0 };
     static constexpr Bounds light_shaft_samples         { 8.0, 128.0 };
     static constexpr Bounds light_shaft_strength        { 0.0, 2.0 };
     static constexpr Bounds light_shaft_decay           { 0.8, 1.0 };

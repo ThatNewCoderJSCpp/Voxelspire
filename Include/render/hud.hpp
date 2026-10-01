@@ -52,6 +52,8 @@ struct HudInfo {
     std::size_t   reflection_planes  = 0;
     int           render_distance    = 0;
     double        daylight           = 1.0;
+    
+    std::vector<SortedMesh> m_front;
 };
 
 struct HudMeter {
@@ -80,6 +82,7 @@ public:
     static constexpr double      GHOST_ALPHA         = 0.35;
     static constexpr std::size_t MAX_CACHED_WIDTHS   = 4096;
     static constexpr int         CORNER_COUNT        = 4;
+    static constexpr double      PERCENT             = 100.0;
 
     static HudCorner next_corner(HudCorner c) noexcept { return static_cast<HudCorner>((static_cast<int>(c) + 1) % CORNER_COUNT); }
 
@@ -105,6 +108,22 @@ public:
             row("Draws", format("%zu meshes in %zu batches", st.batch_items, st.batches));
             row("Jobs", format("%zu gen, %zu mesh, %zu LOD, %zu uploads (%d threads)", info.streaming.jobs_in_flight, t.mesh_jobs, t.lod_jobs, t.pending_uploads, info.worker_threads));
             row("Mesh memory", format("%.1f MB GPU, %.1f MB RAM", t.gpu_mesh_bytes / MB, t.cpu_mesh_bytes / MB));
+        }
+
+        if (hs.sections.gpu) {
+            header("GPU");
+
+            if (!info.gpu.valid) {
+                row("Timing", "not available");
+            } else {
+                row("Frame", format("%.2f ms", info.gpu.total_ms));
+                const double total = info.gpu.total_ms > 0.0 ? info.gpu.total_ms : 1.0;
+
+                for (std::size_t i = 0; i < fizmo::windows::GpuTimings::PASSES; ++i) {
+                    const double ms = info.gpu.pass_ms[i];
+                    row(fizmo::windows::gpu_pass_name(static_cast<fizmo::windows::GpuPass>(i)), format("%.2f ms (%.0f%%)", ms, PERCENT * ms / total));
+                }
+            }
         }
 
         if (hs.sections.player) {

@@ -190,8 +190,34 @@ public:
             return;
         }
 
-        if (m_hud.due(m_frame_dt, m_settings.hud)) m_hud.set_info(hud_info(fps_average), m_settings.hud);
+        track_gpu(renderer);
+
+        if (m_hud.due(m_frame_dt, m_settings.hud)) {
+            m_hud.set_info(hud_info(fps_average), m_settings.hud);
+            m_gpu_sum = {};
+            m_gpu_frames = 0;
+        }
+
         m_hud.render(renderer, m_viewport_w, m_viewport_h, m_settings.hud);
+    }
+
+    void track_gpu(fizmo::windows::Renderer& renderer) {
+        renderer.set_gpu_timing(m_settings.hud.show_debug && m_settings.hud.sections.gpu);
+        const fizmo::windows::GpuTimings t = renderer.gpu_timings();
+        if (!t.valid) return;
+        m_gpu_sum.valid = true;
+        m_gpu_sum.total_ms += t.total_ms;
+        for (std::size_t i = 0; i < t.pass_ms.size(); ++i) m_gpu_sum.pass_ms[i] += t.pass_ms[i];
+        ++m_gpu_frames;
+    }
+
+    fizmo::windows::GpuTimings average_gpu() const noexcept {
+        fizmo::windows::GpuTimings out = m_gpu_sum;
+        if (m_gpu_frames == 0) return out;
+        const double n = static_cast<double>(m_gpu_frames);
+        out.total_ms /= n;
+        for (double& ms : out.pass_ms) ms /= n;
+        return out;
     }
 
     void open_menu() {
@@ -295,6 +321,7 @@ public:
         info.shadow_casters      = m_stats.shadow_casters;
         info.fluid_model         = m_world.settings().fluid_resistance->id();
         info.reflection_planes   = m_reflections.planes().size();
+        info.gpu                 = average_gpu();
         return info;
     }
 
@@ -633,10 +660,13 @@ private:
     std::string                     m_last_key;
     bool                            m_jump_latch = false;
     double                          m_frame_dt = 0.0;
+    fizmo::windows::GpuTimings      m_gpu_sum;
+    std::size_t                     m_gpu_frames = 0;
     double                          m_seconds = 0.0;
     double                          m_accumulator = 0.0;
     double                          m_alpha = 1.0;
-    unsigned int                    m_viewport_w = 1, m_viewport_h = 1;
+    unsigned int                    m_viewport_w = 1;
+    unsigned int                    m_viewport_h = 1;
 };
 
 } // namespace voxelspire

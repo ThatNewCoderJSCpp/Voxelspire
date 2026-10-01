@@ -33,7 +33,12 @@ public:
     static constexpr double NEAR_ALWAYS    = 3.0;
     static constexpr double KEEP_BONUS     = 1.5;
 
-    void update(const World& world, const vector3d& eye, const vector3d& look, const LightingSettings& s) {
+    void update(
+        const World& world, 
+        const vector3d& eye, 
+        const vector3d& look, 
+        const LightingSettings& s
+    ) {
         m_planes.clear();
         if (!s.planar_reflections || s.max_reflection_planes == 0) { m_chosen.clear(); return; }
         const double reach = s.reflection_plane_distance;
@@ -87,7 +92,7 @@ public:
             const ReflectionSurface& r = m_merged.at(scored.second);
             vector3d point = r.box.center();
             set_component(point, face_axis(r.facing), r.coordinate());
-            m_planes.emplace_back(point, r.normal());
+            m_planes.emplace_back(point, r.normal(), r.box.min, r.box.max);
             m_chosen.push_back(scored.second);
         }
 

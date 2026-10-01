@@ -276,6 +276,7 @@ enum class HudCorner : std::uint8_t { TopLeft = 0, TopRight, BottomLeft, BottomR
 
 struct HudSections {
     bool performance = true;
+    bool gpu         = true;
     bool player      = true;
     bool world       = true;
     bool rendering   = true;

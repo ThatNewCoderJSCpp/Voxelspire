@@ -95,7 +95,7 @@ public:
 
                     if (on_camera) {
                         count_groups(e.opaque, mask, stats.quads_drawn, stats.quads_facing_away);
-                        m_opaque.add(e.opaque, lo, mask);
+                        m_front.push_back({ box_sq, &e.opaque, lo, mask });
                     } else {
                         m_reflected.add(e.opaque, lo, mask);
                         ++stats.chunks_reflected;
@@ -110,6 +110,9 @@ public:
             }
         });
 
+        std::sort(m_front.begin(), m_front.end(), [](const SortedMesh& a, const SortedMesh& b) { return a.distance_sq < b.distance_sq; });
+        for (const SortedMesh& s : m_front) m_opaque.add(*s.mesh, s.offset, s.mask);
+        m_front.clear();
         const LodLayout& layout = terrain.layout();
 
         terrain.for_each_drawn_tile([&](const LodTileKey& k, const LodTileEntry& t) {
@@ -204,6 +207,7 @@ private:
         double                               distance_sq;
         const fizmo::graphics::MeshHandle3D* mesh;
         vector3d                             offset;
+        fizmo::graphics::FaceMask            mask = fizmo::graphics::ALL_FACE_GROUPS;
     };
 
     static void count_groups(const fizmo::graphics::MeshHandle3D& mesh, fizmo::graphics::FaceMask mask, std::size_t& drawn, std::size_t& skipped) noexcept {
@@ -228,6 +232,7 @@ private:
     fizmo::graphics::QuadBatch3D m_reflected;
     std::vector<MirrorView>      m_views;
     std::vector<SortedMesh>      m_sorted;
+    std::vector<SortedMesh>      m_front;
     std::vector<ChunkPos>        m_lost_chunks;
     std::vector<LodTileKey>      m_lost_tiles;
 };

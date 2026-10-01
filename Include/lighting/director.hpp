@@ -58,23 +58,24 @@ public:
         out.max_light       = static_cast<float>(s.max_light);
         out.falloff         = static_cast<float>(s.falloff);
 
-        out.sun_shadow.enabled    = s.sun_shadows && s.sun_lighting;
-        out.sun_shadow.resolution = s.sun_shadow_resolution;
-        out.sun_shadow.distance   = s.sun_shadow_distance;
-        out.sun_shadow.strength   = static_cast<float>(s.shadow_strength);
-        out.sun_shadow.softness   = static_cast<float>(s.shadow_softness);
-        out.sun_shadow.angle_step = s.shadow_angle_step;
-        out.sun_shadow.crossfade  = s.shadow_crossfade;
+        out.sun_shadow.enabled      = s.sun_shadows && s.sun_lighting;
+        out.sun_shadow.resolution   = s.sun_shadow_resolution;
+        out.sun_shadow.distance     = s.sun_shadow_distance;
+        out.sun_shadow.strength     = static_cast<float>(s.shadow_strength);
+        out.sun_shadow.softness     = static_cast<float>(s.shadow_softness);
+        out.sun_shadow.angle_step   = s.shadow_angle_step;
+        out.sun_shadow.crossfade    = s.shadow_crossfade;
         out.sun_shadow.soft         = s.soft_shadows;
         out.sun_shadow.light_size   = static_cast<float>(s.soft_shadow_sun_size);
         out.sun_shadow.max_softness = static_cast<float>(s.max_shadow_softness);
         out.sun_shadow.filter_taps  = s.shadow_filter_taps;
+        out.sun_shadow.recenter     = s.sun_shadow_redraw;
 
-        out.point_shadows.enabled    = s.point_shadows;
-        out.point_shadows.max_lights = s.max_point_shadows;
-        out.point_shadows.resolution = s.point_shadow_resolution;
-        out.point_shadows.strength   = static_cast<float>(s.shadow_strength);
-        out.point_shadows.softness   = static_cast<float>(s.shadow_softness);
+        out.point_shadows.enabled         = s.point_shadows;
+        out.point_shadows.max_lights      = s.max_point_shadows;
+        out.point_shadows.resolution      = s.point_shadow_resolution;
+        out.point_shadows.strength        = static_cast<float>(s.shadow_strength);
+        out.point_shadows.softness        = static_cast<float>(s.shadow_softness);
         out.point_shadows.fade_distance   = s.point_shadow_fade;
         out.point_shadows.hide_unshadowed = s.hide_unshadowed_point_lights;
 
@@ -152,6 +153,7 @@ private:
         v.distance   = static_cast<float>(s.volumetric_distance);
         v.intensity  = static_cast<float>(s.volumetric_intensity);
         v.near_bias  = static_cast<float>(s.volumetric_near_bias);
+        v.cell_size  = s.volumetric_cell_size;
 
         LightShafts3D& r = out.shafts;
         r.enabled  = s.light_shafts && s.sun_lighting;
