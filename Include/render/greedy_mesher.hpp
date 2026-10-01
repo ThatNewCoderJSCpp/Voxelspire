@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <vector>
 #include "../core/settings.hpp"
+#include <cmath>
 
 namespace voxelspire {
 
@@ -38,7 +39,11 @@ struct FaceKey {
     static constexpr int           VAR_SHIFT     = 32;
     static constexpr int           SHADE_SHIFT   = 40;
     static constexpr int           FLAGS_SHIFT   = 48;
+    static constexpr int           SURFACE_SHIFT = 56;
+    static constexpr std::uint64_t SURFACE_MASK  = 0x3F;
+    static constexpr int           SURFACE_STEPS = 63;
     static constexpr int           MAX_VARIATION = 255;
+    static constexpr std::uint64_t BYTE_MASK     = 0xFF;
 
     static std::uint64_t make(const Color& base, int variation, std::uint8_t shade, bool translucent = false, std::uint8_t vertex_flags = 0) noexcept {
         return HAS_FACE | (translucent ? TRANSLUCENT : 0) | fizmo::graphics::Vertex3D::pack(base)
@@ -74,6 +79,19 @@ struct FaceKey {
     static std::uint8_t variation(std::uint64_t key) noexcept { return static_cast<std::uint8_t>(key >> VAR_SHIFT); }
     static std::uint8_t shade(std::uint64_t key)     noexcept { return static_cast<std::uint8_t>(key >> SHADE_SHIFT); }
     static bool translucent(std::uint64_t key)       noexcept { return (key & TRANSLUCENT) != 0; }
+
+
+    static std::uint64_t with_surface(std::uint64_t key, double height, std::uint8_t flow) noexcept {
+        const auto steps = static_cast<std::uint64_t>(vclamp(std::lround((1.0 - height) * SURFACE_STEPS), 0L, static_cast<long>(SURFACE_STEPS)));
+        key = (key & ~(SURFACE_MASK << SURFACE_SHIFT)) | (steps << SURFACE_SHIFT);
+        if (flow == 0) return key;
+        key = (key & ~(BYTE_MASK << VAR_SHIFT)) | (static_cast<std::uint64_t>(flow) << VAR_SHIFT);
+        return key | (static_cast<std::uint64_t>(fizmo::graphics::CompactFlow) << FLAGS_SHIFT);
+    }
+
+    static double surface_drop(std::uint64_t key) noexcept {
+        return static_cast<double>((key >> SURFACE_SHIFT) & SURFACE_MASK) / SURFACE_STEPS;
+    }
 };
 
 inline void face_corners(const vector3d& lo, const vector3d& hi, Face f, std::array<vector3d, 4>& out) noexcept {

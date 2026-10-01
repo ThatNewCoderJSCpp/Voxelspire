@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 #include "../block/block.hpp"
 #include "../core/settings.hpp"
 
@@ -47,12 +48,17 @@ public:
 
     BlockId get(int lx, int ly, int lz) const noexcept { return m_blocks[index(lx, ly, lz)]; }
 
-    bool set(int lx, int ly, int lz, BlockId id) noexcept {
-        BlockId& cell = m_blocks[index(lx, ly, lz)];
-        if (cell == id) return false;
-        if (cell == AIR_ID) ++m_non_air;
-        if (id == AIR_ID)   --m_non_air;
+    std::uint8_t state(int lx, int ly, int lz) const noexcept { return m_states.empty() ? 0 : m_states[index(lx, ly, lz)]; }
+
+    bool set(int lx, int ly, int lz, BlockId id, std::uint8_t state = 0) noexcept {
+        const std::size_t i = index(lx, ly, lz);
+        BlockId& cell = m_blocks[i];
+        if (cell == id && this->state(lx, ly, lz) == state) return false;
+        if (cell == AIR_ID && id != AIR_ID) ++m_non_air;
+        if (cell != AIR_ID && id == AIR_ID) --m_non_air;
         cell = id;
+        if (state != 0 && m_states.empty()) m_states.assign(VOLUME, 0);
+        if (!m_states.empty()) m_states[i] = state;
         m_modified = true;
         ++m_revision;
         return true;
@@ -74,6 +80,7 @@ public:
                     if (cell == AIR_ID) ++m_non_air;
                     if (id == AIR_ID)   --m_non_air;
                     cell = id;
+                    if (!m_states.empty()) m_states[index(lx, ly, lz)] = 0;
                     ++changed;
                 }
             }
@@ -99,6 +106,7 @@ public:
 private:
     ChunkPos                    m_pos;
     std::array<BlockId, VOLUME> m_blocks{};
+    std::vector<std::uint8_t>   m_states;
     std::size_t                 m_non_air   = 0;
     bool                        m_modified  = false;
     std::uint64_t               m_revision  = 0;

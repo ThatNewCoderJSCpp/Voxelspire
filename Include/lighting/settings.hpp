@@ -105,6 +105,7 @@ struct LightingSettings {
     bool         planar_reflections         = false;
     unsigned int max_reflection_planes      = 1;
     double       reflection_resolution      = 0.5;
+    double       mirror_resolution          = 0.5;
     double       reflection_distortion      = 0.02;
     double       reflection_plane_distance  = 48.0;
     int          reflection_view_chunks     = 8;
@@ -192,6 +193,7 @@ struct LightingSettings {
         s.screen_reflections      = true;
         s.max_reflection_planes   = 2;
         s.reflection_resolution   = 1.0;
+        s.mirror_resolution       = 1.0;
         s.saturation              = 1.2;
         s.sun_shadow_resolution   = 4096;
         s.sun_shadow_distance     = 96.0;
@@ -266,6 +268,7 @@ struct LightingLimits {
     static constexpr Bounds reflection_distance         { 8.0, 256.0 };
     static constexpr Bounds max_reflection_planes       { 0.0, 2.0 };
     static constexpr Bounds reflection_resolution       { 0.25, 1.0 };
+    static constexpr Bounds mirror_resolution           { 0.25, 1.0 };
     static constexpr Bounds reflection_distortion       { 0.0, 0.1 };
     static constexpr Bounds reflection_plane_distance   { 8.0, 128.0 };
     static constexpr Bounds reflection_view_chunks      { 1.0, 32.0 };

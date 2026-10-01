@@ -13,6 +13,7 @@
 #include "../core/settings.hpp"
 #include "../lighting/engine.hpp"
 #include "chunk.hpp"
+#include <cmath>
 
 namespace voxelspire {
 
@@ -45,11 +46,20 @@ public:
         m_settings.fluid_resistance = physics.fluid_resistance;
         m_settings.fluid_buoyancy   = physics.fluid_buoyancy;
         m_settings.fluid_sink_speed = physics.fluid_sink_speed;
+        m_settings.current_speed    = physics.current_speed;
+        m_settings.current_push     = physics.current_push;
+        m_settings.wade_slowdown    = physics.wade_slowdown;
+        m_settings.fall_break_depth = physics.fall_break_depth;
+        m_settings.fluid_updates    = physics.fluid_updates;
+        const bool rules_changed = physics.fluid_rules != m_settings.fluid_rules;
+        m_settings.fluid_rules      = physics.fluid_rules;
         m_settings = m_settings.validated();
+        if (rules_changed) wake_all_fluids();
     }
 
-    const ChunkMap&  chunks()  const noexcept { return m_chunks; }
-    const ColumnMap& columns() const noexcept { return m_columns; }
+    const ChunkMap&   chunks()  const noexcept { return m_chunks; }
+    const ColumnMap&  columns() const noexcept { return m_columns; }
+    const FluidRules& fluid_rules() const noexcept { return *m_settings.fluid_rules; }
 
     static ChunkPos chunk_pos_of(const BlockPos& p) noexcept {
         return { floor_div(p.x, Chunk::SIZE), floor_div(p.y, Chunk::SIZE), floor_div(p.z, Chunk::SIZE) };
@@ -91,6 +101,50 @@ public:
     const BlockTraits& traits_at(const BlockPos& p) const noexcept { return m_registry->traits(block_id_at(p)); }
     bool is_solid(const BlockPos& p) const noexcept { return traits_at(p).solid; }
 
+    std::uint8_t fluid_state(const BlockPos& p) const noexcept {
+        const Chunk* c = chunk_at(chunk_pos_of(p));
+        if (!c) return 0;
+        return c->state(floor_mod(p.x, Chunk::SIZE), floor_mod(p.y, Chunk::SIZE), floor_mod(p.z, Chunk::SIZE));
+    }
+
+    double fluid_height(const BlockPos& p) const noexcept {
+        const BlockId id = block_id_at(p);
+        if (!m_registry->traits(id).fluid) return 0.0;
+        if (block_id_at({ p.x, p.y, p.z + 1 }) == id) return 1.0;
+        return m_settings.fluid_rules->level(fluid_state(p));
+    }
+
+    double fluid_surface(const BlockPos& p) const noexcept { return p.z + fluid_height(p); }
+
+    vector3d fluid_flow(const BlockPos& p) const noexcept {
+        const BlockId id = block_id_at(p);
+        if (!m_registry->traits(id).fluid) return {};
+        const double h = fluid_height(p);
+        vector3d flow{};
+
+        for (const BlockPos& d : HORIZONTAL_STEPS) {
+            const BlockPos q{ p.x + d.x, p.y + d.y, p.z };
+            const BlockId qid = block_id_at(q);
+            double hq = 0.0;
+            if (qid == id) hq = fluid_height(q);
+            else if (m_registry->traits(qid).solid || !column_loaded(column_of(q))) continue;
+            flow.x += d.x * (h - hq);
+            flow.y += d.y * (h - hq);
+        }
+
+        const double len = std::sqrt(flow.x * flow.x + flow.y * flow.y);
+        if (len > 1.0) { flow.x /= len; flow.y /= len; }
+        const BlockPos below{ p.x, p.y, p.z - 1 };
+        const BlockId bid = block_id_at(below);
+
+        const bool falls = m_settings.fluid_rules->falling(fluid_state(p))
+                        || (bid == AIR_ID && column_loaded(column_of(below)))
+                        || (bid == id && m_settings.fluid_rules->falling(fluid_state(below)));
+
+        if (falls && m_settings.fluid_rules->flows()) flow.z = -1.0;
+        return flow;
+    }
+
     void attach_lighting(std::unique_ptr<LightEngine> engine) {
         m_light = std::move(engine);
         if (!m_light) return;
@@ -109,7 +163,7 @@ public:
         m_light->update(budget_ms, [this](const ChunkPos& p) { mark_changed(p); });
     }
 
-    bool set_block(const BlockPos& p, BlockId id) {
+    bool set_block(const BlockPos& p, BlockId id, std::uint8_t state = 0) {
         if (!in_build_range(p)) return false;
         const ColumnPos col = column_of(p);
         auto colit = m_columns.find(col);
@@ -124,18 +178,28 @@ public:
 
         const int lx = floor_mod(p.x, Chunk::SIZE), ly = floor_mod(p.y, Chunk::SIZE), lz = floor_mod(p.z, Chunk::SIZE);
         const BlockId before = c->get(lx, ly, lz);
-        if (!c->set(lx, ly, lz, id)) return false;
-        if (m_light) m_light->block_changed(p, before, id);
-        mark_changed(cp);
-        if (lx == 0)               mark_changed({ cp.x - 1, cp.y, cp.z });
-        if (lx == Chunk::SIZE - 1) mark_changed({ cp.x + 1, cp.y, cp.z });
-        if (ly == 0)               mark_changed({ cp.x, cp.y - 1, cp.z });
-        if (ly == Chunk::SIZE - 1) mark_changed({ cp.x, cp.y + 1, cp.z });
-        if (lz == 0)               mark_changed({ cp.x, cp.y, cp.z - 1 });
-        if (lz == Chunk::SIZE - 1) mark_changed({ cp.x, cp.y, cp.z + 1 });
-        update_floor(colit->second, col, lx, ly, p.z, id);
+        if (!c->set(lx, ly, lz, id, state)) return false;
+        if (m_light && before != id) m_light->block_changed(p, before, id);
+
+        for (int dz = -1; dz <= 1; ++dz)
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx) mark_changed(chunk_pos_of({ p.x + dx, p.y + dy, p.z + dz }));
+
+        if (before != id) update_floor(colit->second, col, lx, ly, p.z, id);
         if (m_edited_set.insert(col).second) m_edited.push_back(col);
+        wake_around(p);
         return true;
+    }
+
+    std::vector<BlockPos> take_fluid_wakes() {
+        std::vector<BlockPos> out;
+        out.swap(m_fluid_wakes);
+        return out;
+    }
+
+    void wake_all_fluids() {
+        if (!m_settings.fluid_rules->flows()) return;
+        for (const auto& kv : m_columns) wake_column(kv.first);
     }
 
     Chunk* chunk_at(const ChunkPos& cp) noexcept {
@@ -160,6 +224,12 @@ public:
         rebuild_floor(column, col);
         for (int z : column.chunk_zs) mark_changed({ col.x, col.y, z });
         m_column_events.emplace_back(col, ColumnEvent::Loaded);
+
+        if (m_settings.fluid_rules->flows()) {
+            wake_column(col);
+            for (const BlockPos& d : HORIZONTAL_STEPS) wake_column_edge({ col.x + d.x, col.y + d.y }, d);
+        }
+
         if (m_light) m_light->column_loaded(col);
     }
 
@@ -208,6 +278,55 @@ public:
     }
 
 private:
+    static constexpr std::array<BlockPos, 4> HORIZONTAL_STEPS{ BlockPos{ 1, 0, 0 }, BlockPos{ -1, 0, 0 }, BlockPos{ 0, 1, 0 }, BlockPos{ 0, -1, 0 } };
+    static constexpr std::array<BlockPos, 5> SPILL_STEPS{ BlockPos{ 1, 0, 0 }, BlockPos{ -1, 0, 0 }, BlockPos{ 0, 1, 0 }, BlockPos{ 0, -1, 0 }, BlockPos{ 0, 0, -1 } };
+    static constexpr std::array<BlockPos, 7> WAKE_STEPS{ BlockPos{ 0, 0, 0 }, BlockPos{ 1, 0, 0 }, BlockPos{ -1, 0, 0 }, BlockPos{ 0, 1, 0 }, BlockPos{ 0, -1, 0 }, BlockPos{ 0, 0, 1 }, BlockPos{ 0, 0, -1 } };
+
+    void wake_around(const BlockPos& p) {
+        if (!m_settings.fluid_rules->flows()) return;
+        for (const BlockPos& d : WAKE_STEPS) m_fluid_wakes.push_back({ p.x + d.x, p.y + d.y, p.z + d.z });
+    }
+
+    bool spills(const BlockPos& p) const noexcept {
+        for (const BlockPos& d : SPILL_STEPS) {
+            const BlockPos q{ p.x + d.x, p.y + d.y, p.z + d.z };
+            if (block_id_at(q) == AIR_ID && in_build_range(q) && column_loaded(column_of(q))) return true;
+        }
+
+        return false;
+    }
+
+    void wake_chunk(const Chunk& c, int x0, int x1, int y0, int y1) {
+        const BlockTraits* traits = m_registry->traits_table();
+        const BlockPos o = c.origin();
+
+        for (int ly = y0; ly < y1; ++ly)
+            for (int lz = 0; lz < Chunk::SIZE; ++lz)
+                for (int lx = x0; lx < x1; ++lx) {
+                    if (!traits[c.get(lx, ly, lz)].fluid) continue;
+                    const BlockPos p{ o.x + lx, o.y + ly, o.z + lz };
+                    if (spills(p)) m_fluid_wakes.push_back(p);
+                }
+    }
+
+    void wake_column(const ColumnPos& col) {
+        auto it = m_columns.find(col);
+        if (it == m_columns.end()) return;
+
+        for (int cz : it->second.chunk_zs)
+            if (const Chunk* c = chunk_at({ col.x, col.y, cz })) wake_chunk(*c, 0, Chunk::SIZE, 0, Chunk::SIZE);
+    }
+
+    void wake_column_edge(const ColumnPos& col, const BlockPos& side) {
+        auto it = m_columns.find(col);
+        if (it == m_columns.end()) return;
+        const int x0 = side.x < 0 ? Chunk::SIZE - 1 : 0, x1 = side.x > 0 ? 1 : Chunk::SIZE;
+        const int y0 = side.y < 0 ? Chunk::SIZE - 1 : 0, y1 = side.y > 0 ? 1 : Chunk::SIZE;
+
+        for (int cz : it->second.chunk_zs)
+            if (const Chunk* c = chunk_at({ col.x, col.y, cz })) wake_chunk(*c, x0, x1, y0, y1);
+    }
+
     Chunk& add_chunk(ChunkColumn& column, std::unique_ptr<Chunk> chunk) {
         Chunk& ref = *chunk;
         const ChunkPos cp = chunk->pos();
@@ -271,6 +390,7 @@ private:
     std::vector<ColumnPos>                         m_edited;
     std::unordered_set<ColumnPos, ColumnPosHash>   m_edited_set;
     std::unique_ptr<LightEngine>                   m_light;
+    std::vector<BlockPos>                          m_fluid_wakes;
 };
 
 } // namespace voxelspire

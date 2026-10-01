@@ -46,11 +46,96 @@ public:
         double inside = 0.0;
 
         for (int z = floor_to_int(box.min.z); z <= floor_to_int(box.max.z - EPS); ++z) {
-            if (!world.traits_at({ x, y, z }).fluid) continue;
-            inside += vmin(box.max.z, z + 1.0) - vmax(box.min.z, static_cast<double>(z));
+            const double h = world.fluid_height({ x, y, z });
+            if (h <= 0.0) continue;
+            inside += vmax(0.0, vmin(box.max.z, z + h) - vmax(box.min.z, static_cast<double>(z)));
         }
 
         return vclamp(inside / height, 0.0, 1.0);
+    }
+
+        vector3d fluid_current(const Entity& e, const World& world) const {
+        const AABB box = e.bounding_box();
+        const vector3d center = box.center();
+        const int x = floor_to_int(center.x), y = floor_to_int(center.y);
+        vector3d sum{};
+        double weight = 0.0;
+
+        for (int z = floor_to_int(box.min.z); z <= floor_to_int(box.max.z - EPS); ++z) {
+            const BlockPos c{ x, y, z };
+            const double h = world.fluid_height(c);
+            if (h <= 0.0) continue;
+            const double w = vmax(0.0, vmin(box.max.z, z + h) - vmax(box.min.z, static_cast<double>(z)));
+            sum = sum + world.fluid_flow(c) * w;
+            weight += w;
+        }
+
+        return weight > 0.0 ? sum / weight : vector3d{};
+    }
+
+    void apply_current(Entity& e, const World& world, double submerged, double dt) const {
+        if (submerged <= 0.0 || dt <= 0.0 || m_settings.current_speed <= 0.0) return;
+        const vector3d flow = fluid_current(e, world);
+        const double gain = m_settings.current_push * submerged * dt;
+        vector3d v = e.velocity();
+        const double flat = std::sqrt(flow.x * flow.x + flow.y * flow.y);
+        if (flat > 0.0) push_along(v, { flow.x / flat, flow.y / flat, 0.0 }, flat * m_settings.current_speed, gain);
+        if (flow.z < 0.0) push_along(v, { 0.0, 0.0, -1.0 }, -flow.z * m_settings.current_speed, gain);
+        e.set_velocity(v);
+    }
+
+    vector3d current_drift(const Entity& e, const World& world, double submerged) const {
+        if (submerged <= 0.0 || m_settings.current_speed <= 0.0) return {};
+        const vector3d flow = fluid_current(e, world);
+        const double grip = vmin(1.0, submerged * CURRENT_GRIP);
+        return { flow.x * m_settings.current_speed * grip, flow.y * m_settings.current_speed * grip, 0.0 };
+    }
+
+    vector3d approach_drift(const vector3d& drift, const vector3d& target, double dt) const noexcept {
+        const vector3d diff = target - drift;
+        const double len = diff.magnitude();
+        const double step = m_settings.current_push * dt;
+        if (len <= step || len <= 0.0) return target;
+        return drift + diff * (step / len);
+    }
+
+    void apply_falling_water(Entity& e, const World& world, double submerged, double dt) const {
+        if (submerged <= 0.0 || dt <= 0.0) return;
+        const vector3d flow = fluid_current(e, world);
+        if (flow.z >= 0.0) return;
+        vector3d v = e.velocity();
+        push_along(v, { 0.0, 0.0, -1.0 }, -flow.z * m_settings.current_speed, m_settings.current_push * submerged * dt);
+        e.set_velocity(v);
+    }
+
+    double wade_factor(double submerged) const noexcept {
+        return vmax(0.0, 1.0 - vclamp(m_settings.wade_slowdown, 0.0, 1.0) * submerged);
+    }
+
+    double water_depth_below(const Entity& e, const World& world) const {
+        const AABB box = e.bounding_box();
+        const vector3d center = box.center();
+        const int x = floor_to_int(center.x), y = floor_to_int(center.y);
+        int z = floor_to_int(box.min.z);
+        if (world.fluid_height({ x, y, z }) <= 0.0) --z;
+        double depth = 0.0;
+
+        while (depth < m_settings.fall_break_depth) {
+            const double h = world.fluid_height({ x, y, z });
+            if (h <= 0.0) break;
+            depth += h;
+            --z;
+        }
+
+        return depth;
+    }
+
+    double absorb_fall(Entity& e, const World& world, double submerged, bool was_submerged) const {
+        if (submerged <= 0.0) return e.fall_distance();
+        if (was_submerged) return e.fall_distance();
+        const double keep = vmax(0.0, 1.0 - water_depth_below(e, world) / vmax(m_settings.fall_break_depth, EPS));
+        e.set_fall_distance(e.fall_distance() * keep);
+        return e.fall_distance();
     }
 
     double buoyancy_scale(double submerged) const noexcept { return vmax(0.0, 1.0 - vclamp(m_settings.fluid_buoyancy, 0.0, 1.0) * submerged); }
@@ -132,6 +217,14 @@ private:
     static constexpr double EPS          = 1e-7;
     static constexpr double GROUND_PROBE = 0.01;
     static constexpr double SWEEP_MARGIN = 1e-3;
+    static constexpr double CURRENT_GRIP = 2.0;
+
+    static void push_along(vector3d& v, const vector3d& dir, double target, double gain) noexcept {
+        const double along = v.x * dir.x + v.y * dir.y + v.z * dir.z;
+        if (along >= target) return;
+        const double next = vmin(target, along + gain);
+        v = v + dir * (next - along);
+    }
 
     static void track_fall(Entity& e, double moved_z) noexcept {
         if (e.on_ground() || moved_z > 0.0) { e.set_fall_distance(0.0); return; }

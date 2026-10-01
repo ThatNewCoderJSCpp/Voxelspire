@@ -47,8 +47,8 @@ public:
         const ChunkPos hi = World::chunk_pos_of(BlockPos::containing(eye + vector3d{ reach, reach, reach }));
         m_merged.clear();
 
-        for (int cz = lo.z; cz <= hi.z; ++cz)
-            for (int cy = lo.y; cy <= hi.y; ++cy)
+        for (int cz = lo.z; cz <= hi.z; ++cz) {
+            for (int cy = lo.y; cy <= hi.y; ++cy) {
                 for (int cx = lo.x; cx <= hi.x; ++cx) {
                     const ChunkPos p{ cx, cy, cz };
                     const Chunk* chunk = world.chunk_at(p);
@@ -56,7 +56,8 @@ public:
                     const vector3d origin{ double(cx * size), double(cy * size), double(cz * size) };
                     if (distance_sq(eye, AABB(origin, origin + vector3d{ double(size), double(size), double(size) })) > reach * reach) continue;
                     ChunkSurfaces& cached = m_cache[p];
-                    if (!cached.scanned || cached.revision != chunk->revision()) scan(world, *chunk, p, cached);
+                    const std::uintptr_t rules = reinterpret_cast<std::uintptr_t>(&world.fluid_rules());
+                    if (!cached.scanned || cached.revision != chunk->revision() || cached.rules != rules) scan(world, *chunk, p, cached);
 
                     for (const ReflectionSurface& r : cached.surfaces) {
                         if (r.water && !s.water_planar_reflections) continue;
@@ -66,6 +67,8 @@ public:
                         else { it->second.box = it->second.box.united(r.box); it->second.cells += r.cells; }
                     }
                 }
+            }
+        }
 
         m_scored.clear();
 
@@ -93,6 +96,7 @@ public:
             vector3d point = r.box.center();
             set_component(point, face_axis(r.facing), r.coordinate());
             m_planes.emplace_back(point, r.normal(), r.box.min, r.box.max);
+            m_planes.back().resolution = static_cast<float>(r.water ? s.reflection_resolution : s.mirror_resolution);
             m_chosen.push_back(scored.second);
         }
 
@@ -107,12 +111,14 @@ private:
 
     struct ChunkSurfaces {
         std::uint64_t                  revision = 0;
+        std::uintptr_t                 rules    = 0;
         bool                           scanned  = false;
         std::vector<ReflectionSurface> surfaces;
     };
 
     static void scan(const World& world, const Chunk& chunk, const ChunkPos& p, ChunkSurfaces& out) {
         out.revision = chunk.revision();
+        out.rules = reinterpret_cast<std::uintptr_t>(&world.fluid_rules());
         out.scanned = true;
         out.surfaces.clear();
         const BlockTraits* traits = world.blocks().traits_table();
@@ -136,11 +142,27 @@ private:
                         }
                     } else if (t.fluid) {
                         const bool open_above = z + 1 < S ? !traits[chunk.get(x, y, z + 1)].fluid : !world.traits_at({ cell.x, cell.y, cell.z + 1 }).fluid;
-                        if (open_above) add(found, Face::Up, cell.z + 1.0, true, AABB::unit_block(cell));
+                        if (open_above && level_surface(world, cell)) add(found, Face::Up, world.fluid_surface(cell), true, AABB::unit_block(cell));
                     }
                 }
 
         for (auto& entry : found) out.surfaces.push_back(entry.second);
+    }
+
+    static bool level_surface(const World& world, const BlockPos& cell) {
+        static constexpr std::array<BlockPos, 4> SIDES{ BlockPos{ 1, 0, 0 }, BlockPos{ -1, 0, 0 }, BlockPos{ 0, 1, 0 }, BlockPos{ 0, -1, 0 } };
+        static constexpr double TOLERANCE = 1e-3;
+        const BlockId id = world.block_id_at(cell);
+        const double h = world.fluid_height(cell);
+        if (world.fluid_rules().falling(world.fluid_state(cell))) return false;
+
+        for (const BlockPos& d : SIDES) {
+            const BlockPos q{ cell.x + d.x, cell.y + d.y, cell.z };
+            if (world.block_id_at(q) != id) continue;
+            if (std::fabs(world.fluid_height(q) - h) > TOLERANCE) return false;
+        }
+
+        return true;
     }
 
     static void add(std::map<Key, ReflectionSurface>& found, Face f, double coord, bool water, const AABB& box) {

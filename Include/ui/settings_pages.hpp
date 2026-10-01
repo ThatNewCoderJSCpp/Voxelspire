@@ -183,7 +183,7 @@ private:
         using EL = EntityLimits;
         GameSettings* g = &p.live();
         auto ph = [](auto P::*m) { return field(&GameSettings::physics, m); };
-        auto world = [](double WorldSettings::*m) { return field(&GameSettings::world, m); };
+        auto world = [](auto WorldSettings::*m) { return field(&GameSettings::world, m); };
         auto ent = [](auto EntitySettings::*m) { return field(&GameSettings::entities, m); };
 
         p.header("Gravity").applies(Apply::Physics);
@@ -222,6 +222,31 @@ private:
         p.always();
         p.decimal("Buoyancy", "How much of gravity the water cancels when fully under.", world(&WorldSettings::fluid_buoyancy), WL::fluid_buoyancy);
         p.decimal("Free sinking speed", "Fastest you sink without swimming down.", world(&WorldSettings::fluid_sink_speed), WL::fluid_sink_speed).unit("b/s");
+
+                p.decimal("Current speed", "How fast flowing water carries you along.", world(&WorldSettings::current_speed), WL::current_speed).unit("b/s").decimals(1);
+        p.decimal("Current strength", "How quickly flowing water gets you up to its speed.", world(&WorldSettings::current_push), WL::current_push).unit("b/s2").decimals(1);
+        p.decimal("Wading slowdown", "How much walking slows as water gets deeper. 0 means water never slows walking.", world(&WorldSettings::wade_slowdown), WL::wade_slowdown);
+        p.decimal("Depth that stops a fall", "Water this deep cancels a fall completely. Shallower water cancels part of it.", world(&WorldSettings::fall_break_depth), WL::fall_break_depth).unit("blocks").decimals(1);
+
+        p.header("Water flow");
+
+        p.choice(
+            "Water flow",
+            "How water spreads. Minecraft-like has sources that spread a few blocks and never run out. Realistic moves a fixed amount of water, so lakes can drain and puddles spread thin.",
+            ph(&P::flow_model),
+            { "World default", "Still", "Minecraft-like", "Realistic" }
+        );
+
+        p.when([g] { return g->physics.flow_model == FlowModel::Minecraft; });
+        p.decimal("Flow delay", "Time between each step of spreading. Minecraft uses 0.25 seconds.", ph(&P::minecraft_interval), PL::flow_interval).unit("s");
+        p.integer("Spread distance", "How many blocks water flows sideways from a source.", ph(&P::flow_spread), PL::flow_spread).unit("blocks");
+        p.integer("Slope search", "How far water looks for a drop to flow toward.", ph(&P::slope_search), PL::slope_search).unit("blocks");
+        p.toggle("Infinite sources", "Two sources next to each other make a new source, like Minecraft.", ph(&P::infinite_sources));
+        p.when([g] { return g->physics.flow_model == FlowModel::Realistic; });
+        p.decimal("Flow delay", "Time between each step of flowing. Lower is faster but uses more processing.", ph(&P::realistic_interval), PL::flow_interval).unit("s");
+        p.decimal("Thinnest puddle", "Water stops spreading once a puddle is this thin.", ph(&P::min_depth), PL::min_depth).unit("blocks").decimals(3);
+        p.always();
+        p.integer("Updates per step", "Most water blocks updated in one step. Lower protects the frame rate during big floods.", world(&WorldSettings::fluid_updates), WL::fluid_updates);
 
         p.header("Entities").applies(Apply::Entities);
         p.decimal("Push strength", "How hard overlapping entities push each other apart.", ent(&EntitySettings::push_acceleration), EL::push_acceleration).unit("b/s2").decimals(1);
@@ -640,7 +665,8 @@ private:
         p.toggle("Real reflections", "Mirrors and water show the world, including you. Each reflecting surface draws the world again.", l(&L::planar_reflections));
         p.when([g] { return g->lighting.planar_reflections; });
         p.integer("Reflecting surfaces", "How many mirrors or water surfaces can reflect at once.", l(&L::max_reflection_planes), LL::max_reflection_planes);
-        p.decimal("Reflection resolution", "Detail of reflections. 1 is full screen resolution.", l(&L::reflection_resolution), LL::reflection_resolution).unit("x");
+        p.decimal("Water resolution", "Detail of water reflections. 1 is full screen resolution.", l(&L::reflection_resolution), LL::reflection_resolution).unit("x");
+        p.decimal("Mirror resolution", "Detail of mirror reflections. 1 is full screen resolution.", l(&L::mirror_resolution), LL::mirror_resolution).unit("x");
         p.integer("Search distance", "How far away a mirror or water can be to reflect.", l(&L::reflection_plane_distance), LL::reflection_plane_distance).unit("blocks");
         p.integer("Reflected view distance", "How far the world is drawn inside reflections.", l(&L::reflection_view_chunks), LL::reflection_view_chunks).unit("chunks");
         p.decimal("Ripple distortion", "How much waves bend water reflections.", l(&L::reflection_distortion), LL::reflection_distortion).decimals(3);

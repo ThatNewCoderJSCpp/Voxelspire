@@ -29,6 +29,7 @@
 #include "../ui/settings_registry.hpp"
 #include "../world/chunk_streamer.hpp"
 #include "../world/world_generator.hpp"
+#include "../world/fluid_simulator.hpp"
 
 namespace voxelspire {
 
@@ -156,7 +157,8 @@ public:
         m_sky = m_sun_path->evaluate(m_clock.time());
         gather_lights();
         const BlockPos eye_cell = BlockPos::containing(eye);
-        const bool submerged = m_world.traits_at(eye_cell).fluid;
+        const double eye_water = m_world.fluid_height(eye_cell);
+        const bool submerged = eye_water > 0.0 && eye.z < eye_cell.z + eye_water;
         const Color medium = submerged ? opaque(m_world.traits_at(eye_cell).face(Face::Up).base) : Color();
         const bool third_person = m_camera.shows_player();
         const bool show_body = third_person || m_settings.render.first_person_body;
@@ -320,6 +322,8 @@ public:
         info.dynamic_lights      = m_lighting.scene().point_lights.size();
         info.shadow_casters      = m_stats.shadow_casters;
         info.fluid_model         = m_world.settings().fluid_resistance->id();
+        info.flow_model          = m_world.fluid_rules().id();
+        info.fluids              = m_fluids.stats();
         info.reflection_planes   = m_reflections.planes().size();
         info.gpu                 = average_gpu();
         return info;
@@ -466,14 +470,22 @@ private:
     }
 
     void apply_physics() {
-        WorldSettings w = m_world.settings();
-        w.gravity          = m_settings.world.gravity;
-        w.air_resistance   = m_settings.physics.air_resistance(w.gravity, m_settings.world.air_resistance);
-        w.fluid_resistance = m_settings.physics.fluid_resistance(m_settings.world.fluid_resistance);
-        w.fluid_buoyancy   = m_settings.world.fluid_buoyancy;
-        w.fluid_sink_speed = m_settings.world.fluid_sink_speed;
+        WorldSettings w      = m_world.settings();
+        w.gravity            = m_settings.world.gravity;
+        w.air_resistance     = m_settings.physics.air_resistance(w.gravity, m_settings.world.air_resistance);
+        w.fluid_resistance   = m_settings.physics.fluid_resistance(m_settings.world.fluid_resistance);
+        w.fluid_buoyancy     = m_settings.world.fluid_buoyancy;
+        w.fluid_sink_speed   = m_settings.world.fluid_sink_speed;
+        w.fluid_rules        = m_settings.physics.fluid_rules(m_settings.world.fluid_rules);
+        w.current_speed      = m_settings.world.current_speed;
+        w.current_push       = m_settings.world.current_push;
+        w.wade_slowdown      = m_settings.world.wade_slowdown;
+        w.fall_break_depth   = m_settings.world.fall_break_depth;
+        w.fluid_updates      = m_settings.world.fluid_updates;
+        const bool new_rules = w.fluid_rules != m_world.settings().fluid_rules;
         m_world.set_physics(w);
         m_physics.set_settings(m_world.settings());
+        if (new_rules) m_terrain.remesh_all();
     }
 
     void apply_light_format() {
@@ -558,6 +570,7 @@ private:
         m_simulation.radius = static_cast<double>(simulation_distance()) * Chunk::SIZE;
         m_simulation.world  = &m_world;
         TickContext ctx{ m_world, m_physics, m_entities, dt, &m_simulation };
+        m_fluids.update(m_world, dt, m_simulation.center, m_simulation.radius);
         m_entities.tick(ctx);
         m_clock.advance(dt, m_settings.day_cycle);
         if (m_jump_latch) { m_jump_latch = false; MovementIntent i = m_player->intent(); i.jump = false; m_player->set_intent(i); }
@@ -654,6 +667,7 @@ private:
     WorldRenderStats                m_stats;
 
     SimulationArea                  m_simulation;
+    FluidSimulator                  m_fluids;
     ColumnPos                       m_stream_center{};
     bool                            m_streaming_dirty = true;
     std::optional<RaycastHit>       m_target;

@@ -12,6 +12,7 @@
 #include "../world/chunk_streamer.hpp"
 #include "../world/voxel_raycast.hpp"
 #include "world_renderer.hpp"
+#include "../world/fluid_simulator.hpp"
 
 namespace voxelspire {
 
@@ -49,6 +50,8 @@ struct HudInfo {
     std::size_t   dynamic_lights     = 0;
     std::size_t   shadow_casters     = 0;
     std::string   fluid_model;
+    std::string   flow_model;
+    FluidStats    fluids;
     std::size_t   reflection_planes  = 0;
     int           render_distance    = 0;
     double        daylight           = 1.0;
@@ -151,6 +154,7 @@ public:
             if (std::isfinite(info.terminal_velocity)) row("Air", format("%s, terminal %.1f b/s", info.air_model.c_str(), info.terminal_velocity));
             else row("Air", info.air_model + ", no terminal velocity");
             row("Fluids", info.fluid_model);
+            row("Water flow", format("%s, %zu waiting, %zu updated, %zu far away", info.flow_model.c_str(), info.fluids.pending, info.fluids.updated, info.fluids.dormant));
         }
 
         if (hs.sections.rendering) {

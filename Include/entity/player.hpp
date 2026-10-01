@@ -100,8 +100,9 @@ public:
         vector3d wish = flat_forward() * m_intent.forward + flat_right() * m_intent.strafe;
         const double len = wish.magnitude();
         if (len > 1.0) wish = wish / len;
-        const MovementStats stats = movement_stats();
+        MovementStats stats = movement_stats();
         const double submerged = ctx.physics.submerged_fraction(*this, ctx.world);
+        if (!mctx.in_fluid) stats.speed *= ctx.physics.wade_factor(submerged);
         
         ctx.physics.apply_fluid(
             *this, submerged, stats.speed * m_mode->speed_multiplier(m_intent), 
@@ -110,11 +111,18 @@ public:
             ctx.dt
         );
 
-        vector3d v = m_velocity;
+        m_drift = ctx.physics.approach_drift(m_drift, ctx.physics.current_drift(*this, ctx.world, submerged), ctx.dt);
+        vector3d v = m_velocity - m_drift;
         m_mode->update_velocity(v, wish, mctx, stats, ctx.dt);
+        v = v + m_drift;
         if (v.z > 0.0 && m_on_ground) m_on_ground = false;
         m_velocity = v;
+        ctx.physics.apply_falling_water(*this, ctx.world, submerged, ctx.dt);
         ctx.physics.apply_gravity(*this, ctx.dt, effective_gravity_scale() * ctx.physics.buoyancy_scale(submerged), effective_drag_scale());
+        const double fall_cap = ctx.physics.absorb_fall(*this, ctx.world, submerged, m_was_submerged);
+        ctx.physics.move(*this, ctx.world, m_velocity * ctx.dt);
+        if (submerged > 0.0) m_fall_distance = vmin(m_fall_distance, fall_cap);
+        m_was_submerged = submerged > 0.0;
         ctx.physics.move(*this, ctx.world, m_velocity * ctx.dt);
         const double target_eye = m_body.get(m_pose).eye_height;
         m_eye_height += (target_eye - m_eye_height) * vmin(1.0, EYE_SMOOTHING * ctx.dt);
@@ -156,14 +164,14 @@ private:
         return !ctx.physics.collides(ctx.world, box);
     }
 
-    bool head_in_fluid(const World& world) const {
-        return world.traits_at(BlockPos::containing(eye_position())).fluid;
+    static bool under_surface(const World& world, const vector3d& p) {
+        const BlockPos cell = BlockPos::containing(p);
+        const double h = world.fluid_height(cell);
+        return h > 0.0 && p.z < cell.z + h;
     }
 
-    bool in_fluid(const World& world) const {
-        const vector3d center = m_position + vector3d{ 0.0, 0.0, m_height * 0.5 };
-        return world.traits_at(BlockPos::containing(center)).fluid;
-    }
+    bool head_in_fluid(const World& world) const { return under_surface(world, eye_position()); }
+    bool in_fluid(const World& world) const { return under_surface(world, m_position + vector3d{ 0.0, 0.0, m_height * 0.5 }); }
 
     AttributeMap                m_attributes;
     const MovementModeRegistry* m_modes;
@@ -175,6 +183,8 @@ private:
     double                      m_prev_eye_height;
     DynamicLight                m_hand_light;
     bool                        m_has_hand_light = false;
+    bool                        m_was_submerged  = false;
+    vector3d                    m_drift{};
 };
 
 } // namespace voxelspire
