@@ -1,9 +1,49 @@
 #ifndef VOXELSPIRE_ENTITY_CHARACTER_SETTINGS_HPP
 #define VOXELSPIRE_ENTITY_CHARACTER_SETTINGS_HPP
 
+#include "../core/limits.hpp"
 #include "entity_body.hpp"
 
 namespace voxelspire {
+
+struct CharacterLimits {
+    static constexpr Bounds width                { 0.2, 2.0 };
+    static constexpr Bounds reach                { 1.0, 20.0 };
+    static constexpr Bounds standing_height      { 0.2, 4.0 };
+    static constexpr Bounds crouching_height     { 0.2, 4.0 };
+    static constexpr Bounds crawling_height      { 0.1, 4.0 };
+    static constexpr Bounds swimming_height      { 0.1, 4.0 };
+    static constexpr Bounds standing_eye_height  { 0.1, 4.0 };
+    static constexpr Bounds crouching_eye_height { 0.1, 4.0 };
+    static constexpr Bounds crawling_eye_height  { 0.05, 4.0 };
+    static constexpr Bounds swimming_eye_height  { 0.05, 4.0 };
+    static constexpr Bounds walk_speed           { 0.0, 50.0 };
+    static constexpr Bounds sprint_speed         { 0.0, 80.0 };
+    static constexpr Bounds crouch_speed         { 0.0, 30.0 };
+    static constexpr Bounds crawl_speed          { 0.0, 20.0 };
+    static constexpr Bounds swim_speed           { 0.0, 30.0 };
+    static constexpr Bounds stroke_speed         { 0.0, 40.0 };
+    static constexpr Bounds fly_speed            { 0.0, 200.0 };
+    static constexpr Bounds alt_walk_speed       { 0.0, 50.0 };
+    static constexpr Bounds alt_sprint_speed     { 0.0, 80.0 };
+    static constexpr Bounds alt_crouch_speed     { 0.0, 30.0 };
+    static constexpr Bounds alt_crawl_speed      { 0.0, 20.0 };
+    static constexpr Bounds alt_swim_speed       { 0.0, 30.0 };
+    static constexpr Bounds alt_stroke_speed     { 0.0, 40.0 };
+    static constexpr Bounds alt_fly_speed        { 0.0, 200.0 };
+    static constexpr Bounds jump_velocity        { 0.0, 40.0 };
+    static constexpr Bounds ground_acceleration  { 1.0, 300.0 };
+    static constexpr Bounds air_acceleration     { 0.0, 300.0 };
+    static constexpr Bounds swim_acceleration    { 1.0, 300.0 };
+    static constexpr Bounds stroke_acceleration  { 1.0, 300.0 };
+    static constexpr Bounds swim_rise_speed      { 0.0, 10.0 };
+    static constexpr Bounds swim_sink_speed      { 0.0, 10.0 };
+    static constexpr Bounds swim_vertical_accel  { 0.5, 60.0 };
+    static constexpr Bounds surface_leap         { 0.0, 3.0 };
+    static constexpr Bounds stroke_buoyancy      { 0.0, 2.0 };
+    static constexpr Bounds fly_vertical_speed   { 0.0, 100.0 };
+    static constexpr Bounds fly_vertical_accel   { 1.0, 300.0 };
+};
 
 struct CharacterSettings {
     double width = PlayerDefaults::width;

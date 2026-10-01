@@ -14,6 +14,7 @@
 #include "../entity/player.hpp"
 #include "../input/input_bindings.hpp"
 #include "../lighting/director.hpp"
+#include "../lighting/presets.hpp"
 #include "../lighting/world_light.hpp"
 #include "../particles/system.hpp"
 #include "../render/block_outline_renderer.hpp"
@@ -25,6 +26,7 @@
 #include "../ui/settings_file.hpp"
 #include "../ui/settings_menu.hpp"
 #include "../ui/settings_pages.hpp"
+#include "../ui/settings_registry.hpp"
 #include "../world/chunk_streamer.hpp"
 #include "../world/world_generator.hpp"
 
@@ -48,7 +50,7 @@ public:
           m_particles(m_particle_types, settings.particles),
           m_entities(settings.entities),
           m_player(&m_entities.spawn<Player>(m_attributes, m_movement_modes)),
-          m_camera(settings.camera, 1, 1, settings.render.render_distance),
+          m_camera(settings.camera, 1, 1, settings.render.render_distance_blocks()),
           m_clock(settings.day_cycle.start_time),
           m_sun_path(std::make_unique<DefaultSunPath>(m_settings.day_cycle, m_settings.celestial)),
           m_capsule(make_capsule(settings.render)) {
@@ -61,6 +63,7 @@ public:
         m_camera.add_rig(std::make_unique<ThirdPersonFrontRig>());
         apply_character();
         apply_physics();
+        SettingsPages::register_all(m_settings_registry, make_hooks(), m_presets);
     }
 
     ~Game() { m_jobs.shutdown(); }
@@ -80,8 +83,7 @@ public:
         m_viewport_w = viewport_w;
         m_viewport_h = viewport_h;
         m_camera.update(*m_player, m_world, 1.0, 0.0);
-        build_menu();
-        apply_settings(SettingsFile::load(m_menu.tabs(), m_settings.menu.file));
+        rebuild_menu();
     }
 
     void shutdown() noexcept { if (m_cursor) m_cursor->unlock(); }
@@ -114,7 +116,7 @@ public:
         m_key_consumed = false;
 
         if (m_menu.is_open()) {
-            m_menu.update(input);
+            m_menu.update(input, frame_dt);
             apply_settings(m_menu.take_changes());
             if (m_menu.take_close_request()) close_menu();
         }
@@ -156,6 +158,9 @@ public:
         const BlockPos eye_cell = BlockPos::containing(eye);
         const bool submerged = m_world.traits_at(eye_cell).fluid;
         const Color medium = submerged ? opaque(m_world.traits_at(eye_cell).face(Face::Up).base) : Color();
+        const bool third_person = m_camera.shows_player();
+        const bool show_body = third_person || m_settings.render.first_person_body;
+        gather_occluders(show_body);
         m_reflections.update(m_world, eye, m_camera.camera().forward(), m_settings.lighting);
         m_lighting.set_reflection_planes(m_reflections.planes());
         renderer.set_scene_lighting(m_lighting.build(m_sky, m_world, eye, m_frame_lights, m_seconds, submerged ? &medium : nullptr));
@@ -163,19 +168,18 @@ public:
         renderer.set_light_3d(fizmo::graphics::Light3D::sun(LEGACY_SUN));
         m_celestial.render(renderer, celestial_view(eye, submerged));
         WorldRenderOptions options;
-        options.render_distance = m_settings.render.render_distance;
+        options.render_distance = m_settings.render.render_distance_blocks();
         options.cave_culling    = m_settings.render.cave_culling;
         options.face_culling    = m_settings.render.face_culling;
         options.shadow_distance = m_lighting.shadows() ? m_lighting.shadow_distance() : 0.0;
         options.reflections     = m_reflections.planes();
-        options.reflection_distance = m_settings.lighting.reflection_render_distance;
+        options.reflection_distance = static_cast<double>(m_settings.lighting.reflection_view_chunks) * Chunk::SIZE;
         m_stats = m_world_renderer.render(renderer, m_terrain, m_camera.camera(), options);
         m_particles.render(renderer, eye, [this](const BlockPos& b) { return m_lighting.render_light_at(m_world, b.center()); });
-        const bool third_person = m_camera.shows_player();
 
-        if (third_person || m_settings.render.first_person_body) {
+        if (show_body) {
             const auto view = third_person ? fizmo::graphics::View3D::Everywhere : fizmo::graphics::View3D::ReflectionsOnly;
-            m_capsule.render(renderer, *m_player, m_alpha, m_lighting.render_light_at(m_world, m_player->interpolated_position(m_alpha) + vector3d{ 0.0, 0.0, m_player->height() * 0.5 }), view);
+            m_capsule.render(renderer, *m_player, m_alpha, m_lighting.render_light_at(m_world, m_player->interpolated_position(m_alpha) + vector3d{ 0.0, 0.0, m_player->height() * 0.5 }), view, !m_lighting.capsule_shadows());
         }
 
         if (m_target && !m_menu.is_open()) m_outline.render(renderer, m_world, *m_target, m_settings.render);
@@ -215,12 +219,26 @@ public:
 
     bool save_settings() { return SettingsFile::save(m_menu.tabs(), m_settings.menu.file); }
 
+    void load_settings() {
+        const SettingsLoad loaded = SettingsFile::load(m_menu.tabs(), m_settings.menu.file);
+        apply_settings(loaded.applied);
+        m_menu.report_problems(loaded.problems);
+    }
+
+    void rebuild_menu() {
+        m_menu.set_tabs(m_settings_registry.build(m_settings, m_default_settings));
+        load_settings();
+    }
+
+    SettingsRegistry& settings_registry() noexcept { return m_settings_registry; }
+    LightingPresets&  lighting_presets()  noexcept { return m_presets; }
+
     bool take_display_change() noexcept { const bool d = m_display_dirty; m_display_dirty = false; return d; }
 
     void apply_settings(std::uint32_t groups) {
         if (groups == Apply::Nothing) return;
         if (groups & Apply::Display)     m_display_dirty = true;
-        if (groups & Apply::Camera)      m_camera.set_settings(m_settings.camera, m_settings.render.render_distance);
+        if (groups & Apply::Camera)      m_camera.set_settings(m_settings.camera, m_settings.render.render_distance_blocks());
         if (groups & Apply::Character)   apply_character();
         if (groups & Apply::Physics)     apply_physics();
         if (groups & Apply::Celestial)   m_celestial.configure(m_settings.celestial);
@@ -259,13 +277,17 @@ public:
         info.streaming         = m_streamer.stats();
         info.simulation_distance = m_settings.streaming.simulation_distance;
         info.detail_distance     = m_settings.streaming.detail_distance;
+        info.render_distance     = m_settings.render.render_distance;
+        info.daylight            = m_sky.daylight;
         info.worker_threads      = m_jobs.worker_count();
         info.particles           = m_particles.count();
         info.particle_emitters   = m_particles.emitter_count();
         info.seed                = m_settings.world.seed;
         info.light               = m_world.lighting() ? m_world.lighting()->stats() : LightStats{};
         info.lighting_preset     = m_settings.lighting.name;
-        info.time_hours          = m_clock.hours(m_settings.day_cycle.hours_per_day);
+        info.time_hours          = m_clock.hours(m_settings.day_cycle);
+        info.minutes_per_hour    = m_settings.day_cycle.minutes_per_hour;
+        info.seconds_per_minute  = m_settings.day_cycle.seconds_per_minute;
         info.day                 = m_clock.day();
         info.day_cycle           = m_settings.day_cycle.enabled;
         info.light_here          = light_level_at(m_player->eye_position(m_alpha));
@@ -287,10 +309,7 @@ public:
     }
 
     void cycle_lighting() {
-        const std::vector<LightingSettings> presets = LightingSettings::presets();
-        std::size_t next = 0;
-        for (std::size_t i = 0; i < presets.size(); ++i) if (presets[i].name == m_settings.lighting.name) next = (i + 1) % presets.size();
-        set_lighting(presets[next]);
+        if (const LightingSettings* next = m_presets.next(m_settings.lighting.name)) set_lighting(*next);
     }
 
     void toggle_hand_light() {
@@ -323,14 +342,14 @@ public:
     const WorldRenderStats& last_render_stats() const noexcept { return m_stats; }
     const std::optional<RaycastHit>& target() const noexcept { return m_target; }
 
-    void set_render_distance(double distance) noexcept {
-        m_settings.render.render_distance = vclamp(distance, EngineLimits::MIN_RENDER_DISTANCE, EngineLimits::MAX_RENDER_DISTANCE);
-        m_camera.set_view_distance(m_settings.render.render_distance);
+    void set_render_distance(int chunks) noexcept {
+        m_settings.render.render_distance = static_cast<int>(RenderLimits::render_distance.clamp(chunks));
+        m_camera.set_view_distance(m_settings.render.render_distance_blocks());
         m_streaming_dirty = true;
     }
 
     void set_simulation_distance(int chunks) noexcept {
-        m_settings.streaming.simulation_distance = vmax(chunks, 1);
+        m_settings.streaming.simulation_distance = static_cast<int>(StreamingLimits::simulation_distance.clamp(chunks));
         m_streaming_dirty = true;
     }
 
@@ -339,7 +358,7 @@ public:
     JobSystem&           jobs()             noexcept { return m_jobs; }
     const WorldGenerator& generator() const noexcept { return *m_generator; }
 
-    double render_distance() const noexcept { return m_settings.render.render_distance; }
+    int render_distance() const noexcept { return m_settings.render.render_distance; }
 
     void advance(double dt) {
         const double tick = 1.0 / m_settings.simulation.tick_rate;
@@ -396,14 +415,14 @@ private:
         if (keys.just_pressed(input, Action::ToggleDayCycle))     m_settings.day_cycle.enabled = !m_settings.day_cycle.enabled;
     }
 
-    void build_menu() {
+    SettingsHooks make_hooks() {
         SettingsHooks hooks;
         hooks.hour     = [this] { return m_clock.hours(m_settings.day_cycle.hours_per_day); };
         hooks.set_hour = [this](double h) { m_clock.set_time(h / vmax(m_settings.day_cycle.hours_per_day, 1.0)); };
         hooks.save     = [this] { save_settings(); };
-        hooks.reload   = [this] { apply_settings(SettingsFile::load(m_menu.tabs(), m_settings.menu.file)); };
+        hooks.reload   = [this] { load_settings(); };
         hooks.respawn  = [this] { respawn_player(); };
-        m_menu.set_tabs(SettingsPages::build(m_settings, m_default_settings, hooks));
+        return hooks;
     }
 
     void apply_character() {
@@ -481,7 +500,7 @@ private:
         m_stream_center = here;
         m_streaming_dirty = false;
         const double detail = static_cast<double>(m_settings.streaming.detail_distance) * Chunk::SIZE;
-        LodSelection sel = LodSelector::select(eye, m_settings.render.render_distance, detail, m_settings.lod, m_terrain.layout(), m_world);
+        LodSelection sel = LodSelector::select(eye, m_settings.render.render_distance_blocks(), detail, m_settings.lod, m_terrain.layout(), m_world);
         std::unordered_set<ColumnPos, ColumnPosHash> load(sel.detail_set.begin(), sel.detail_set.end());
 
         for (const ColumnPos& c : sel.detail_columns)
@@ -513,7 +532,7 @@ private:
         m_simulation.world  = &m_world;
         TickContext ctx{ m_world, m_physics, m_entities, dt, &m_simulation };
         m_entities.tick(ctx);
-        m_clock.advance_ticks(1.0, m_settings.day_cycle);
+        m_clock.advance(dt, m_settings.day_cycle);
         if (m_jump_latch) { m_jump_latch = false; MovementIntent i = m_player->intent(); i.jump = false; m_player->set_intent(i); }
         const double void_z = m_world.settings().min_z - m_world.settings().void_depth;
         if (m_player->position().z < void_z) respawn_player();
@@ -533,6 +552,16 @@ private:
         });
         
         m_dynamic_lights.for_each([this](const DynamicLight& l) { m_frame_lights.push_back(l); });
+    }
+
+    void gather_occluders(bool show_player) {
+        m_lighting.clear_occluders();
+
+        m_entities.for_each([this, show_player](const Entity& e) {
+            if (&e == m_player && !show_player) return;
+            fizmo::graphics::CapsuleOccluder3D c;
+            if (e.casts_capsule_shadow(c, m_alpha)) m_lighting.add_occluder(c);
+        });
     }
 
     static AttributeRegistry make_attributes() {
@@ -590,6 +619,8 @@ private:
     BlockOutlineRenderer            m_outline;
     Hud                             m_hud;
     SettingsMenu                    m_menu;
+    SettingsRegistry                m_settings_registry;
+    LightingPresets                 m_presets = LightingPresets::builtin();
     bool                            m_display_dirty = false;
     bool                            m_key_consumed = false;
     int                             m_ignore_look = 0;

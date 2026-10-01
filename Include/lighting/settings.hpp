@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <string>
 #include <vector>
+#include "../core/limits.hpp"
 #include "format.hpp"
 
 namespace voxelspire {
@@ -58,6 +59,10 @@ struct LightingSettings {
     double       point_shadow_fade            = 4.0;
     bool         hide_unshadowed_point_lights = true;
 
+    bool   capsule_shadows          = true;
+    double capsule_shadow_sun_size  = 1.0;
+    double capsule_shadow_lamp_size = 0.2;
+
     bool   atmosphere      = false;
     double fog_density     = 0.0025;
     double fog_start       = 32.0;
@@ -100,7 +105,7 @@ struct LightingSettings {
     double       reflection_resolution      = 0.5;
     double       reflection_distortion      = 0.02;
     double       reflection_plane_distance  = 48.0;
-    double       reflection_render_distance = 128.0;
+    int          reflection_view_chunks     = 8;
     bool         water_planar_reflections   = true;
 
     bool   underwater_fog     = true;
@@ -195,32 +200,122 @@ struct LightingSettings {
         s.max_block_point_lights  = 32;
         return s;
     }
+};
 
-    static std::vector<LightingSettings> presets() { return { off(), basic(), classic(), dynamic(), realistic(), ultra() }; }
+struct LightingLimits {
+    static constexpr Bounds ambient_occlusion           { 0.0, 2.0 };
+    static constexpr Bounds occlusion_step              { 0.0, 0.5 };
+    static constexpr Bounds face_shading                { 0.0, 1.0 };
+    static constexpr Bounds falloff                     { 1.0, 4.0 };
+    static constexpr Bounds min_light                   { 0.0, 0.5 };
+    static constexpr Bounds max_light                   { 0.5, 4.0 };
+    static constexpr Bounds ambient                     { 0.0, 1.0 };
+    static constexpr Bounds sky_light                   { 0.0, 2.0 };
+    static constexpr Bounds block_light                 { 0.0, 2.0 };
+    static constexpr Bounds sun_strength                { 0.0, 3.0 };
+    static constexpr Bounds sun_exposure                { 0.0, 8.0 };
+    static constexpr Bounds max_dynamic_lights          { 0.0, 128.0 };
+    static constexpr Bounds dynamic_light_distance      { 8.0, 256.0 };
+    static constexpr Bounds max_block_point_lights      { 0.0, 64.0 };
+    static constexpr Bounds block_point_light_distance  { 8.0, 128.0 };
+    static constexpr Bounds block_point_light_intensity { 0.0, 3.0 };
+    static constexpr Bounds block_point_light_radius    { 1.0, 32.0 };
+    static constexpr Bounds point_light_fade            { 0.0, 16.0 };
+    static constexpr Bounds sun_shadow_distance         { 16.0, 256.0 };
+    static constexpr Bounds shadow_strength             { 0.0, 1.0 };
+    static constexpr Bounds shadow_softness             { 0.0, 6.0 };
+    static constexpr Bounds shadow_angle_step           { 0.0, 2.0 };
+    static constexpr Bounds soft_shadow_sun_size        { 0.1, 5.0 };
+    static constexpr Bounds max_shadow_softness         { 1.0, 32.0 };
+    static constexpr Bounds shadow_filter_taps          { 1.0, 8.0 };
+    static constexpr Bounds max_point_shadows           { 0.0, 8.0 };
+    static constexpr Bounds point_shadow_fade           { 0.0, 16.0 };
+    static constexpr Bounds capsule_shadow_sun_size     { 0.0, 5.0 };
+    static constexpr Bounds capsule_shadow_lamp_size    { 0.0, 1.0 };
+    static constexpr Bounds fog_density                 { 0.0, 0.05 };
+    static constexpr Bounds fog_start                   { 0.0, 256.0 };
+    static constexpr Bounds sky_glow                    { 0.0, 2.0 };
+    static constexpr Bounds sun_glow_spread             { 1.0, 32.0 };
+    static constexpr Bounds sun_glow_focus              { 16.0, 4000.0 };
+    static constexpr Bounds volumetric_steps            { 4.0, 128.0 };
+    static constexpr Bounds volumetric_density          { 0.0, 0.2 };
+    static constexpr Bounds volumetric_anisotropy       { -0.9, 0.95 };
+    static constexpr Bounds volumetric_distance         { 16.0, 256.0 };
+    static constexpr Bounds volumetric_intensity        { 0.0, 5.0 };
+    static constexpr Bounds volumetric_near_bias        { 1.0, 4.0 };
+    static constexpr Bounds light_shaft_samples         { 8.0, 128.0 };
+    static constexpr Bounds light_shaft_strength        { 0.0, 2.0 };
+    static constexpr Bounds light_shaft_decay           { 0.8, 1.0 };
+    static constexpr Bounds light_shaft_length          { 0.1, 1.0 };
+    static constexpr Bounds light_shaft_focus           { 1.0, 100.0 };
+    static constexpr Bounds reflectivity                { 0.0, 2.0 };
+    static constexpr Bounds wave_strength               { 0.0, 0.5 };
+    static constexpr Bounds wave_scale                  { 0.1, 4.0 };
+    static constexpr Bounds wave_speed                  { 0.0, 5.0 };
+    static constexpr Bounds specular_power              { 8.0, 1000.0 };
+    static constexpr Bounds specular                    { 0.0, 10.0 };
+    static constexpr Bounds refraction_strength         { 0.0, 2.0 };
+    static constexpr Bounds water_absorption            { 0.0, 1.0 };
+    static constexpr Bounds water_scattering            { 0.0, 1.0 };
+    static constexpr Bounds reflection_steps            { 4.0, 128.0 };
+    static constexpr Bounds reflection_distance         { 8.0, 256.0 };
+    static constexpr Bounds max_reflection_planes       { 0.0, 2.0 };
+    static constexpr Bounds reflection_resolution       { 0.25, 1.0 };
+    static constexpr Bounds reflection_distortion       { 0.0, 0.1 };
+    static constexpr Bounds reflection_plane_distance   { 8.0, 128.0 };
+    static constexpr Bounds reflection_view_chunks      { 1.0, 32.0 };
+    static constexpr Bounds underwater_density          { 0.0, 1.0 };
+    static constexpr Bounds exposure                    { 0.1, 3.0 };
+    static constexpr Bounds saturation                  { 0.0, 2.0 };
+    static constexpr Bounds update_budget_ms            { 0.1, 20.0 };
 };
 
 struct DayCycleSettings {
-    bool   enabled          = true;
-    double ticks_per_day    = 72000.0;
-    double hours_per_day    = 24.0;
-    double start_time       = 0.3;
-    double sun_tilt         = 0.35;
-    double night_brightness = 0.2;
-    double horizon_fade     = 0.12;
-    double twilight         = 0.2;
-    double dusk_sky_mix     = 0.6;
-    Color  day_sky          = Color(135, 190, 255);
-    Color  night_sky        = Color(8, 11, 28);
-    Color  dusk_sky         = Color(250, 140, 80);
-    Color  day_light_tint   = Color(255, 255, 255);
-    Color  night_light_tint = Color(130, 150, 255);
-    Color  day_zenith       = Color(62, 118, 228);
-    Color  day_horizon      = Color(172, 208, 250);
-    Color  night_zenith     = Color(3, 5, 16);
-    Color  night_horizon    = Color(14, 20, 44);
-    Color  dusk_horizon     = Color(255, 150, 90);
-    Color  sun_glow         = Color(255, 214, 160);
-    Color  dusk_glow        = Color(255, 120, 60);
+    static constexpr double REAL_SECONDS_PER_MINUTE = 60.0;
+ 
+    bool   enabled            = true;
+    double real_day_minutes   = 20.0;
+    double hours_per_day      = 24.0;
+    double minutes_per_hour   = 60.0;
+    double seconds_per_minute = 60.0;
+    double start_time         = 0.3;
+    double sun_tilt           = 0.35;
+    double night_brightness   = 0.2;
+    double horizon_fade       = 0.12;
+    double twilight           = 0.2;
+    double dusk_sky_mix       = 0.6;
+    Color  day_sky            = Color(135, 190, 255);
+    Color  night_sky          = Color(8, 11, 28);
+    Color  dusk_sky           = Color(250, 140, 80);
+    Color  day_light_tint     = Color(255, 255, 255);
+    Color  night_light_tint   = Color(130, 150, 255);
+    Color  day_zenith         = Color(62, 118, 228);
+    Color  day_horizon        = Color(172, 208, 250);
+    Color  night_zenith       = Color(3, 5, 16);
+    Color  night_horizon      = Color(14, 20, 44);
+    Color  dusk_horizon       = Color(255, 150, 90);
+    Color  sun_glow           = Color(255, 214, 160);
+    Color  dusk_glow          = Color(255, 120, 60);
+ 
+    double real_day_seconds()                              const noexcept { return real_day_minutes * REAL_SECONDS_PER_MINUTE; }
+    double minutes_per_day()                               const noexcept { return hours_per_day * minutes_per_hour; }
+    double seconds_per_day()                               const noexcept { return minutes_per_day() * seconds_per_minute; }
+    double ticks_per_day(double ticks_per_second)          const noexcept { return real_day_seconds() * ticks_per_second; }
+    double ticks_per_hour(double ticks_per_second)         const noexcept { return ticks_per_day(ticks_per_second) / hours_per_day; }
+    double ticks_per_minute(double ticks_per_second)       const noexcept { return ticks_per_day(ticks_per_second) / minutes_per_day(); }
+    double ticks_per_clock_second(double ticks_per_second) const noexcept { return ticks_per_day(ticks_per_second) / seconds_per_day(); }
+};
+
+struct DayCycleLimits {
+    static constexpr Bounds real_day_minutes   { 0.25, 1440.0 };
+    static constexpr Bounds hours_per_day      { 0.25, 1000.0 };
+    static constexpr Bounds minutes_per_hour   { 0.25, 1000.0 };
+    static constexpr Bounds seconds_per_minute { 0.25, 1000.0 };
+    static constexpr Bounds sun_tilt           { 0.0, 1.0 };
+    static constexpr Bounds night_brightness   { 0.0, 1.0 };
+    static constexpr Bounds horizon_fade       { 0.01, 0.5 };
+    static constexpr Bounds twilight           { 0.01, 0.5 };
+    static constexpr Bounds dusk_sky_mix       { 0.0, 1.0 };
 };
 
 } // namespace voxelspire

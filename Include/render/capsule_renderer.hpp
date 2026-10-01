@@ -19,7 +19,8 @@ public:
         const Player& player, 
         double alpha,
         fizmo::graphics::BakedLight light = fizmo::graphics::BakedLight::full_sky(),
-        fizmo::graphics::View3D view = fizmo::graphics::View3D::Everywhere
+        fizmo::graphics::View3D view = fizmo::graphics::View3D::Everywhere,
+        bool casts_shadow = true
     ) {
         const vector3d feet = player.interpolated_position(alpha);
         const double yaw = deg_to_rad(player.yaw());
@@ -28,7 +29,12 @@ public:
         model.data[0] = c;  model.data[1] = -s;  model.data[3]  = feet.x;
         model.data[4] = s;  model.data[5] = c;   model.data[7]  = feet.y;
         model.data[11] = feet.z;
-        renderer.draw_mesh(mesh_for(player.capsule_radius(), player.height()), model, fizmo::graphics::Material3D().with_light(light).with_view(view));
+        
+        renderer.draw_mesh(
+            mesh_for(player.capsule_radius(), player.height()), 
+            model, 
+            fizmo::graphics::Material3D().with_light(light).with_view(view).with_shadow(casts_shadow ? fizmo::graphics::Shadow3D::Cast : fizmo::graphics::Shadow3D::None)
+        );
     }
 
 private:

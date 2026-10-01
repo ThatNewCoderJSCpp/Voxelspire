@@ -16,8 +16,8 @@
 namespace voxelspire {
 
 struct HudInfo {
-    double      fps_average = 0.0;
-    vector3d    position{};
+    double   fps_average = 0.0;
+    vector3d position{};
     vector3d    velocity{};
     bool        on_ground = false;
     std::string camera_mode;
@@ -37,39 +37,54 @@ struct HudInfo {
     int         worker_threads      = 0;
     std::size_t particles           = 0;
     std::size_t particle_emitters   = 0;
-    std::uint64_t seed              = 0;
+    std::uint64_t seed               = 0;
     LightStats    light;
     std::string   lighting_preset;
-    double        time_hours        = 0.0;
-    std::int64_t  day               = 0;
-    bool          day_cycle         = true;
+    double        time_hours         = 0.0;
+    double        minutes_per_hour   = 60.0;
+    double        seconds_per_minute = 60.0;
+    std::int64_t  day                = 0;
+    bool          day_cycle          = true;
     LightLevel    light_here;
-    std::size_t   dynamic_lights    = 0;
-    std::size_t   shadow_casters    = 0;
+    std::size_t   dynamic_lights     = 0;
+    std::size_t   shadow_casters     = 0;
     std::string   fluid_model;
-    std::size_t   reflection_planes = 0;
+    std::size_t   reflection_planes  = 0;
+    int           render_distance    = 0;
+    double        daylight           = 1.0;
+};
+
+struct HudMeter {
+    double fraction = 0.0;
+    Color  color;
+    double width = 1.0;
+    double ghost = 0.0;
 };
 
 struct HudRow {
-    std::string label;
-    std::string value;
-    bool        header = false;
+    std::string           label;
+    std::string           value;
+    bool                  header = false;
+    std::vector<HudMeter> meters;
 };
 
 class Hud {
 public:
     static constexpr double      FALLBACK_CHAR_WIDTH = 0.55;
-    static constexpr double      MINUTES_PER_HOUR    = 60.0;
     static constexpr double      SCALE_STEP          = 0.1;
-    static constexpr double      MIN_SCALE           = 0.5;
-    static constexpr double      MAX_SCALE           = 3.0;
+    static constexpr double      METER_HEIGHT        = 0.55;
+    static constexpr double      METER_GAP           = 0.35;
+    static constexpr double      SWATCH_WIDTH        = 0.2;
+    static constexpr double      CHANNEL_WIDTH       = 0.34;
+    static constexpr double      FULL_DAYLIGHT       = 0.995;
+    static constexpr double      GHOST_ALPHA         = 0.35;
     static constexpr std::size_t MAX_CACHED_WIDTHS   = 4096;
     static constexpr int         CORNER_COUNT        = 4;
 
     static HudCorner next_corner(HudCorner c) noexcept { return static_cast<HudCorner>((static_cast<int>(c) + 1) % CORNER_COUNT); }
 
     static double stepped_scale(double scale, int direction) noexcept {
-        return vclamp(std::round((scale + SCALE_STEP * direction) / SCALE_STEP) * SCALE_STEP, MIN_SCALE, MAX_SCALE);
+        return HudLimits::scale.clamp(std::round((scale + SCALE_STEP * direction) / SCALE_STEP) * SCALE_STEP);
     }
 
     bool due(double dt, const HudSettings& hs) noexcept {
@@ -107,8 +122,10 @@ public:
         if (hs.sections.world) {
             header("World");
             row("Seed", format("%llu", static_cast<unsigned long long>(info.seed)));
-            const int hour = static_cast<int>(info.time_hours), minute = static_cast<int>((info.time_hours - hour) * MINUTES_PER_HOUR);
-            row("Time", format("%02d:%02d, day %lld%s", hour, minute, static_cast<long long>(info.day), info.day_cycle ? "" : " (paused)"));
+            const double minutes = (info.time_hours - std::floor(info.time_hours)) * info.minutes_per_hour;
+            const int hour = static_cast<int>(info.time_hours), minute = static_cast<int>(minutes);
+            const int second = static_cast<int>((minutes - minute) * info.seconds_per_minute);
+            row("Time", format("%02d:%02d:%02d, day %lld%s", hour, minute, second, static_cast<long long>(info.day), info.day_cycle ? "" : " (paused)"));
             row("Columns", format("%zu loaded, %zu stored edits", info.streaming.loaded_columns, info.streaming.stored_chunks));
             row("Entities", format("%zu (%zu touching)", info.entity_count, info.entity_contacts));
             row("Particles", format("%zu (%zu emitters)", info.particles, info.particle_emitters));
@@ -119,7 +136,7 @@ public:
 
         if (hs.sections.rendering) {
             header("Rendering");
-            row("Distance", format("%.0f blocks, detail %d, simulation %d chunks", st.render_distance, info.detail_distance, info.simulation_distance));
+            row("Distance", format("%d chunks, detail %d, simulation %d", info.render_distance, info.detail_distance, info.simulation_distance));
             row("Chunks", format("%zu drawn / %zu meshed, %zu cave-culled, %zu see-through", st.chunks_visible, st.chunks_total, st.chunks_cave_culled, st.translucent_visible));
             row("Quads", format("%zu drawn / %zu, %zu facing away", st.quads_drawn, st.quads_total, st.quads_facing_away));
             row("LOD tiles", format("%zu drawn / %zu, %zu quads", st.lod_tiles_drawn, st.lod_tiles_total, st.lod_quads_drawn));
@@ -132,8 +149,7 @@ public:
             row("Lights", format("%zu point lights, %zu shadow casters", info.dynamic_lights, info.shadow_casters));
             row("Light data", format("%zu sections, %.2f MB, %zu emitters", info.light.sections, info.light.bytes / MB, info.light.emitters));
             row("Updates", format("%zu pending, %.2f ms", info.light.pending_columns, info.light.update_ms));
-            const LightLevel& lh = info.light_here;
-            row("Light here", format("sky %d, block %d %d %d", lh.sky, lh.red, lh.green, lh.blue));
+            light_rows(info, hs);
         }
     }
 
@@ -147,8 +163,58 @@ public:
 private:
     struct Box { int x, y, w, h; };
 
-    void header(const char* name) { m_rows.push_back({ name, std::string(), true }); }
-    void row(const char* label, std::string value) { m_rows.push_back({ label, std::move(value), false }); }
+    void header(const char* name) { m_rows.push_back({ name, std::string(), true, {} }); }
+    void row(const char* label, std::string value, std::vector<HudMeter> meters = {}) { m_rows.push_back({ label, std::move(value), false, std::move(meters) }); }
+
+    void light_rows(const HudInfo& info, const HudSettings& hs) {
+        const LightLevel& lh = info.light_here;
+        const double max = LightLimits::MAX;
+        const int sky_now = static_cast<int>(std::lround(lh.sky * info.daylight));
+        const int block = lh.block();
+        const int level = vmax(sky_now, block);
+        const char* source = level == 0 ? "dark" : (sky_now >= block ? "from the sky" : "from blocks");
+        auto byte = [](int v) { return static_cast<std::uint8_t>(v * LightLevel::BYTE_SCALE); };
+
+        const std::string sky_text = info.daylight < FULL_DAYLIGHT ? format("%d / %d, %d right now", lh.sky, LightLimits::MAX, sky_now) : format("%d / %d", lh.sky, LightLimits::MAX);
+        row("Light level", format("%d / %d, %s", level, LightLimits::MAX, source), { { level / max, hs.level_meter, 1.0 } });
+        row("Sky light", sky_text, { { sky_now / max, hs.sky_meter, 1.0, lh.sky / max } });
+        
+        row("Block light", format("%d / %d  (R %d, G %d, B %d)", block, LightLimits::MAX, lh.red, lh.green, lh.blue),
+            { { 1.0, Color(byte(lh.red), byte(lh.green), byte(lh.blue)), SWATCH_WIDTH },
+              { lh.red / max, hs.red_meter, CHANNEL_WIDTH },
+              { lh.green / max, hs.green_meter, CHANNEL_WIDTH },
+              { lh.blue / max, hs.blue_meter, CHANNEL_WIDTH } });
+    }
+
+    int meters_width(const HudRow& row, double size, const HudSettings& hs) const noexcept {
+        if (row.meters.empty()) return 0;
+        const int gap = px(size * METER_GAP);
+        int total = gap;
+        for (const HudMeter& m : row.meters) total += px(size * hs.meter_width * m.width) + gap;
+        return total;
+    }
+
+    void draw_meters(
+        fizmo::windows::Renderer& r, 
+        const HudRow& row, 
+        int x, int y, double size, 
+        const HudSettings& hs
+    ) const {
+        const int gap = px(size * METER_GAP), h = vmax(2, px(size * METER_HEIGHT));
+        const int top = y + (px(size) - h) / 2;
+        x += gap;
+
+        for (const HudMeter& m : row.meters) {
+            const int w = vmax(2, px(size * hs.meter_width * m.width));
+            r.draw_rect(x, top, static_cast<unsigned int>(w), static_cast<unsigned int>(h), fizmo::graphics::Paint::fill(hs.meter_background));
+            const int ghost = static_cast<int>(std::lround(w * vclamp(m.ghost, 0.0, 1.0)));
+            const Color dim(m.color.red(), m.color.green(), m.color.blue(), static_cast<std::uint8_t>(m.color.alpha() * GHOST_ALPHA));
+            if (ghost > 0) r.draw_rect(x, top, static_cast<unsigned int>(ghost), static_cast<unsigned int>(h), fizmo::graphics::Paint::fill(dim));
+            const int filled = static_cast<int>(std::lround(w * vclamp(m.fraction, 0.0, 1.0)));
+            if (filled > 0) r.draw_rect(x, top, static_cast<unsigned int>(filled), static_cast<unsigned int>(h), fizmo::graphics::Paint::fill(m.color));
+            x += w + gap;
+        }
+    }
 
     static double clean(double v) noexcept { return std::fabs(v) < 0.005 ? 0.0 : v; }
 
@@ -163,7 +229,12 @@ private:
 
     static int px(double v) noexcept { return static_cast<int>(std::lround(v)); }
 
-    static fizmo::text::TextStyle style(const HudSettings& hs, double size, const Color& c, bool bold = false) {
+    static fizmo::text::TextStyle style(
+        const HudSettings& hs, 
+        double size, 
+        const Color& c, 
+        bool bold = false
+    ) {
         fizmo::text::TextStyle s(size, c);
         const double offset = hs.shadow_offset * hs.scale;
         if (offset > 0.0) s.set_shadow(offset, offset, 0.0, hs.text_shadow);
@@ -171,7 +242,12 @@ private:
         return s;
     }
 
-    unsigned int width_of(fizmo::windows::Renderer& r, const std::string& text, const fizmo::text::TextStyle& st, double size, bool bold) {
+    unsigned int width_of(
+        fizmo::windows::Renderer& r, 
+        const std::string& text, 
+        const fizmo::text::TextStyle& st, 
+        double size, bool bold
+    ) {
         if (m_cached_size != size) { m_widths.clear(); m_cached_size = size; }
         if (m_widths.size() > MAX_CACHED_WIDTHS) m_widths.clear();
         const std::string key = (bold ? "b:" : "r:") + text;
@@ -183,13 +259,22 @@ private:
         return width;
     }
 
-    static Box place(HudCorner corner, int w, int h, unsigned int screen_w, unsigned int screen_h, int margin) noexcept {
+    static Box place(
+        HudCorner corner, 
+        int w, int h, 
+        unsigned int screen_w, unsigned int screen_h, 
+        int margin
+    ) noexcept {
         const bool right  = corner == HudCorner::TopRight || corner == HudCorner::BottomRight;
         const bool bottom = corner == HudCorner::BottomLeft || corner == HudCorner::BottomRight;
         return { right ? static_cast<int>(screen_w) - w - margin : margin, bottom ? static_cast<int>(screen_h) - h - margin : margin, w, h };
     }
 
-    void draw_panel(fizmo::windows::Renderer& r, unsigned int w, unsigned int h, const HudSettings& hs) {
+    void draw_panel(
+        fizmo::windows::Renderer& r, 
+        unsigned int w, unsigned int h, 
+        const HudSettings& hs
+    ) {
         const double full = panel_height(hs, hs.scale);
         double reserved = hs.margin * hs.scale * 2.0;
         const double room = static_cast<double>(h) - reserved;
@@ -211,7 +296,11 @@ private:
         return total;
     }
 
-    void draw_panel_at(fizmo::windows::Renderer& r, unsigned int w, unsigned int h, const HudSettings& hs) {
+    void draw_panel_at(
+        fizmo::windows::Renderer& r, 
+        unsigned int w, unsigned int h, 
+        const HudSettings& hs
+    ) {
         const double size = hs.text_size * hs.scale;
         const fizmo::text::TextStyle label = style(hs, size, hs.label_color);
         const fizmo::text::TextStyle value = style(hs, size, hs.text_color);
@@ -229,7 +318,7 @@ private:
                 if (i > 0) content_h += section_gap;
             } else {
                 label_w = vmax(label_w, width_of(r, row.label, label, size, false));
-                value_w = vmax(value_w, width_of(r, row.value, value, size, false));
+                value_w = vmax(value_w, width_of(r, row.value, value, size, false) + static_cast<unsigned int>(meters_width(row, size, hs)));
             }
 
             content_h += line_h;
@@ -250,6 +339,7 @@ private:
             } else {
                 r.draw_text(label_x, y, row.label, label);
                 r.draw_text(value_x, y, row.value, value);
+                if (!row.meters.empty()) draw_meters(r, row, value_x + static_cast<int>(width_of(r, row.value, value, size, false)), y, size, hs);
             }
 
             y += line_h;

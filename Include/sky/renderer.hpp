@@ -22,11 +22,8 @@ struct CelestialView {
 
 class CelestialRenderer {
 public:
-    static constexpr double MIN_DISTANCE = 0.05;
-    static constexpr double MAX_DISTANCE = 0.95;
-    static constexpr int    MIN_SEGMENTS = 3;
-    static constexpr int    MIN_RINGS    = 1;
-    static constexpr int    MAX_STARS    = 20000;
+    static constexpr int MIN_SEGMENTS = static_cast<int>(SunLimits::segments.min);
+    static constexpr int MIN_RINGS    = static_cast<int>(SunLimits::rings.min);
 
     void configure(const CelestialSettings& settings) {
         m_settings = settings;
@@ -46,7 +43,7 @@ public:
     void render(fizmo::windows::Renderer& renderer, const CelestialView& view) {
         const CelestialSettings& s = m_settings;
         if (view.submerged && s.hide_underwater) return;
-        const double distance = view.far_plane * vclamp(s.distance, MIN_DISTANCE, MAX_DISTANCE);
+        const double distance = view.far_plane * CelestialLimits::distance.clamp(s.distance);
         if (distance <= 0.0) return;
         if (s.stars.visible) draw_stars(renderer, view, distance);
         if (s.sun.visible) draw_sun(renderer, view, distance);
@@ -225,7 +222,7 @@ private:
         const StarSettings& s = m_settings.stars;
         m_stars.clear();
         m_stars_dirty = false;
-        const int count = vclamp(s.count, 0, MAX_STARS);
+        const int count = static_cast<int>(StarLimits::count.clamp(s.count));
         m_stars.reserve(static_cast<std::size_t>(count));
         std::mt19937 rng(s.seed);
         std::uniform_real_distribution<double> unit(0.0, 1.0);
@@ -296,14 +293,14 @@ private:
         if (!m_instances.empty()) renderer.draw_instances(m_star_mesh, view.eye, m_instances, m);
     }
 
-    CelestialSettings                         m_settings;
-    std::vector<fizmo::graphics::Vertex3D>    m_triangles;
-    std::vector<fizmo::graphics::Vertex3D>    m_ring;
-    std::vector<fizmo::graphics::Vertex3D>    m_previous;
-    fizmo::graphics::Mesh3D                   m_star_mesh;
-    std::vector<Star>                         m_stars;
-    std::vector<fizmo::graphics::Instance3D>  m_instances;
-    bool                                      m_stars_dirty = true;
+    CelestialSettings                        m_settings;
+    std::vector<fizmo::graphics::Vertex3D>   m_triangles;
+    std::vector<fizmo::graphics::Vertex3D>   m_ring;
+    std::vector<fizmo::graphics::Vertex3D>   m_previous;
+    fizmo::graphics::Mesh3D                  m_star_mesh;
+    std::vector<Star>                        m_stars;
+    std::vector<fizmo::graphics::Instance3D> m_instances;
+    bool                                     m_stars_dirty = true;
 };
 
 } // namespace voxelspire

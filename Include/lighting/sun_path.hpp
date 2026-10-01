@@ -71,7 +71,6 @@ public:
         out.moon_position = sun * -1.0;
         out.night = 1.0 - day;
         out.dusk = dusk;
-
         const SunSettings& b = m_bodies.sun;
         const MoonSettings& m = m_bodies.moon;
         const double sun_light = b.emits_light ? sun_up * b.light_strength : 0.0;
@@ -104,9 +103,9 @@ class WorldClock {
 public:
     explicit WorldClock(double start_time = 0.3) noexcept { set_time(start_time); }
 
-    void advance_ticks(double ticks, const DayCycleSettings& s) noexcept {
-        if (!s.enabled || s.ticks_per_day <= 0.0) return;
-        add(ticks / s.ticks_per_day);
+    void advance(double seconds, const DayCycleSettings& s) noexcept {
+        if (!s.enabled || s.real_day_seconds() <= 0.0) return;
+        add(seconds / s.real_day_seconds());
     }
 
     void add(double days) noexcept {
@@ -121,6 +120,7 @@ public:
     double       time() const noexcept { return m_time; }
     std::int64_t day()  const noexcept { return m_day; }
     double       hours(double hours_per_day) const noexcept { return m_time * hours_per_day; }
+    double       hours(const DayCycleSettings& s) const noexcept { return hours(s.hours_per_day); }
 
 private:
     double       m_time = 0.0;

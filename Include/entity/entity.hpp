@@ -47,6 +47,7 @@ public:
     virtual void on_touch(Entity&, TickContext&) {}
     virtual bool despawns_in_void() const noexcept { return true; }
     virtual bool emits_light(DynamicLight& /*out*/, double /*alpha*/) const { return false; }
+    virtual bool casts_capsule_shadow(fizmo::graphics::CapsuleOccluder3D&, double) const { return false; }
 
     EntityId id()        const noexcept { return m_id; }
     bool     removed()   const noexcept { return m_removed; }

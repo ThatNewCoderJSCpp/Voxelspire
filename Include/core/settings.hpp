@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "limits.hpp"
 #include "types.hpp"
 #include "../entity/character_settings.hpp"
 #include "../input/input_bindings.hpp"
@@ -19,8 +20,6 @@
 namespace voxelspire {
 
 struct EngineLimits {
-    static constexpr double MIN_RENDER_DISTANCE  = 16.0;
-    static constexpr double MAX_RENDER_DISTANCE  = 1000000.0;
     static constexpr int    CHUNK_SIZE           = 16;
     static constexpr int    WORLD_MIN_Z          = -512;
     static constexpr int    WORLD_MAX_Z          = 1024;
@@ -74,6 +73,12 @@ struct WorldSettings {
     }
 };
 
+struct WorldLimits {
+    static constexpr Bounds gravity          { 0.0, 100.0 };
+    static constexpr Bounds fluid_buoyancy   { 0.0, 1.0 };
+    static constexpr Bounds fluid_sink_speed { 0.0, 20.0 };
+};
+
 struct FlatLayer {
     std::string block;
     int         thickness = 1;
@@ -110,9 +115,20 @@ struct CameraSettings {
     double collision_margin      = 0.2;
 };
 
+struct CameraLimits {
+    static constexpr Bounds fov_y                 { 30.0, 130.0 };
+    static constexpr Bounds near_plane            { 0.01, 1.0 };
+    static constexpr Bounds third_person_distance { 1.0, 16.0 };
+    static constexpr Bounds collision_margin      { 0.0, 1.0 };
+};
+
 struct DisplaySettings {
-    bool   vsync   = false;
-    double max_fps = 0.0;
+    bool vsync   = false;
+    int  max_fps = 0;
+};
+
+struct DisplayLimits {
+    static constexpr Bounds max_fps { 0.0, 1000.0 };
 };
 
 struct ControlSettings {
@@ -120,10 +136,20 @@ struct ControlSettings {
     bool   invert_y          = false;
 };
 
+struct ControlLimits {
+    static constexpr Bounds mouse_sensitivity { 0.01, 1.0 };
+};
+
 struct SimulationSettings {
     double tick_rate           = 60.0;
     double game_speed          = 1.0;
     int    max_ticks_per_frame = 10;
+};
+
+struct SimulationLimits {
+    static constexpr Bounds tick_rate           { 1.0, 480.0 };
+    static constexpr Bounds game_speed          { 0.1, 10.0 };
+    static constexpr Bounds max_ticks_per_frame { 1.0, 60.0 };
 };
 
 struct MenuSettings {
@@ -141,6 +167,11 @@ struct MenuSettings {
     Color       toggle_on     { 64, 186, 104 };
     Color       control       { 42, 47, 60 };
     Color       danger        { 214, 88, 88 };
+    Color       error         { 255, 96, 96 };
+};
+
+struct MenuLimits {
+    static constexpr Bounds scale { 0.6, 2.0 };
 };
 
 struct StreamingSettings {
@@ -154,15 +185,35 @@ struct StreamingSettings {
     int         worker_threads         = 0;
 };
 
+struct StreamingLimits {
+    static constexpr Bounds simulation_distance   { 1.0, 32.0 };
+    static constexpr Bounds detail_distance       { 1.0, 64.0 };
+    static constexpr Bounds unload_margin         { 0.0, 8.0 };
+    static constexpr Bounds max_column_jobs       { 1.0, 512.0 };
+    static constexpr Bounds max_mesh_jobs         { 1.0, 1024.0 };
+    static constexpr Bounds upload_megabytes      { 1.0, 256.0 };
+    static constexpr Bounds result_time_budget_ms { 0.5, 33.0 };
+};
+
 struct LodSettings {
     bool        enabled            = true;
-    int         tile_cells         = 32;
+    int         tile_chunks        = 2;
     int         max_level          = 12;
     int         heightmap_level    = 4;
     double      coverage_threshold = 0.5;
     std::size_t max_tile_jobs      = 32;
     int         exact_levels       = 2;
     int         samples_per_cell   = 4;
+};
+
+struct LodLimits {
+    static constexpr Bounds tile_chunks        { 1.0, 8.0 };
+    static constexpr Bounds max_level          { 1.0, 16.0 };
+    static constexpr Bounds heightmap_level    { 0.0, 16.0 };
+    static constexpr Bounds coverage_threshold { 0.0, 1.0 };
+    static constexpr Bounds max_tile_jobs      { 1.0, 128.0 };
+    static constexpr Bounds exact_levels       { 0.0, 8.0 };
+    static constexpr Bounds samples_per_cell   { 1.0, 8.0 };
 };
 
 struct ParticleSettings {
@@ -173,13 +224,26 @@ struct ParticleSettings {
     double      recenter_distance = 512.0;
 };
 
+struct ParticleLimits {
+    static constexpr Bounds max_particles { 0.0, 1000000.0 };
+    static constexpr Bounds emit_distance { 8.0, 512.0 };
+    static constexpr Bounds draw_distance { 8.0, 512.0 };
+};
+
 struct FaceShadingSettings {
     double up = 1.0, down = 0.5, north_south = 0.8, east_west = 0.62;
 };
 
+struct FaceShadingLimits {
+    static constexpr Bounds up          { 0.0, 1.0 };
+    static constexpr Bounds down        { 0.0, 1.0 };
+    static constexpr Bounds north_south { 0.0, 1.0 };
+    static constexpr Bounds east_west   { 0.0, 1.0 };
+};
+
 struct RenderSettings {
-    double render_distance      = 512.0;
-    double render_distance_step = 64.0;
+    int    render_distance      = 32;
+    int    render_distance_step = 4;
     bool   merge_faces          = true;
     bool   cave_culling         = true;
     bool   face_culling         = true;
@@ -195,6 +259,17 @@ struct RenderSettings {
     int    capsule_segments = 16;
     int    capsule_rings    = 4;
     bool   first_person_body = true;
+
+    double render_distance_blocks() const noexcept { return static_cast<double>(render_distance) * EngineLimits::CHUNK_SIZE; }
+};
+
+struct RenderLimits {
+    static constexpr Bounds render_distance      { 1.0, 62500.0 };
+    static constexpr Bounds render_distance_step { 1.0, 64.0 };
+    static constexpr Bounds outline_width        { 1.0, 8.0 };
+    static constexpr Bounds outline_inflate      { 0.0, 0.05 };
+    static constexpr Bounds capsule_segments     { 6.0, 64.0 };
+    static constexpr Bounds capsule_rings        { 2.0, 16.0 };
 };
 
 enum class HudCorner : std::uint8_t { TopLeft = 0, TopRight, BottomLeft, BottomRight };
@@ -234,7 +309,30 @@ struct HudSettings {
     double      crosshair_size   = 8.0;
     double      crosshair_gap    = 0.0;
     double      crosshair_thickness = 2.0;
+    double      meter_width      = 5.0;
+    Color       meter_background { 255, 255, 255, 38 };
+    Color       sky_meter        { 125, 195, 255 };
+    Color       level_meter      { 255, 212, 96 };
+    Color       red_meter        { 235, 80, 80 };
+    Color       green_meter      { 90, 210, 110 };
+    Color       blue_meter       { 95, 145, 255 };
     HudSections sections;
+};
+
+struct HudLimits {
+    static constexpr Bounds scale               { 0.5, 3.0 };
+    static constexpr Bounds text_size           { 8.0, 32.0 };
+    static constexpr Bounds line_spacing        { 1.0, 2.0 };
+    static constexpr Bounds section_spacing     { 0.0, 2.0 };
+    static constexpr Bounds column_gap          { 0.0, 60.0 };
+    static constexpr Bounds margin              { 0.0, 60.0 };
+    static constexpr Bounds padding             { 0.0, 40.0 };
+    static constexpr Bounds refresh_interval    { 0.0, 2.0 };
+    static constexpr Bounds shadow_offset       { 0.0, 4.0 };
+    static constexpr Bounds crosshair_size      { 2.0, 40.0 };
+    static constexpr Bounds crosshair_gap       { 0.0, 20.0 };
+    static constexpr Bounds crosshair_thickness { 1.0, 8.0 };
+    static constexpr Bounds meter_width         { 1.0, 12.0 };
 };
 
 struct EntitySettings {
@@ -244,6 +342,15 @@ struct EntitySettings {
     double      octree_margin       = 1.0;
     double      push_acceleration   = 24.0;
     double      max_push_speed      = 4.0;
+};
+
+struct EntityLimits {
+    static constexpr Bounds octree_max_per_node { 1.0, 64.0 };
+    static constexpr Bounds octree_max_depth    { 1.0, 16.0 };
+    static constexpr Bounds octree_looseness    { 1.0, 4.0 };
+    static constexpr Bounds octree_margin       { 0.0, 4.0 };
+    static constexpr Bounds push_acceleration   { 0.0, 100.0 };
+    static constexpr Bounds max_push_speed      { 0.0, 20.0 };
 };
 
 struct GameSettings {

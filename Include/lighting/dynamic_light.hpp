@@ -3,7 +3,7 @@
 
 #include <cstdint>
 #include <unordered_map>
-#include "../core/types.hpp"
+#include "../core/limits.hpp"
 
 namespace voxelspire {
 
@@ -25,6 +25,12 @@ struct DynamicLight {
         l.affects_light_level = counts_as_light_level;
         return l;
     }
+};
+
+struct DynamicLightLimits {
+    static constexpr Bounds intensity { 0.0, 4.0 };
+    static constexpr Bounds radius    { 1.0, 40.0 };
+    static constexpr Bounds level     { 0.0, 15.0 };
 };
 
 class DynamicLights {

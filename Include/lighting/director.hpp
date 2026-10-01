@@ -78,6 +78,12 @@ public:
         out.point_shadows.fade_distance   = s.point_shadow_fade;
         out.point_shadows.hide_unshadowed = s.hide_unshadowed_point_lights;
 
+        out.capsule_shadows.enabled    = s.capsule_shadows;
+        out.capsule_shadows.sun_size   = static_cast<float>(s.capsule_shadow_sun_size);
+        out.capsule_shadows.point_size = static_cast<float>(s.capsule_shadow_lamp_size);
+        out.capsule_shadows.strength   = static_cast<float>(s.shadow_strength);
+        out.capsule_shadows.capsules   = m_occluders;
+
         environment(sky, seconds, camera_medium);
         if (s.dynamic_lights) add_dynamic(camera, lights);
         if (s.block_point_lights) add_blocks(world, camera);
@@ -111,6 +117,9 @@ public:
     const fizmo::graphics::SceneLighting3D& scene() const noexcept { return m_scene; }
 
     void set_reflection_planes(const std::vector<fizmo::graphics::ReflectionPlane3D>& planes) { m_planes = planes; }
+    bool capsule_shadows() const noexcept { return m_settings.capsule_shadows && shadows(); }
+    void clear_occluders() { m_occluders.clear(); }
+    void add_occluder(const fizmo::graphics::CapsuleOccluder3D& capsule) { m_occluders.push_back(capsule); }
 
 private:
     static constexpr double SUN_CASTER_REACH = 1.5;
@@ -258,6 +267,7 @@ private:
     std::vector<fizmo::graphics::ReflectionPlane3D> m_planes;
     std::vector<EmitterBlock>                       m_emitters;
     std::vector<std::pair<double, std::size_t>>     m_order;
+    std::vector<fizmo::graphics::CapsuleOccluder3D> m_occluders;
 };
 
 } // namespace voxelspire

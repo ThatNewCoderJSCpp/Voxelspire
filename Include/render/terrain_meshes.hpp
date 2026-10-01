@@ -90,7 +90,7 @@ public:
         m_mesh_options = next;
         m_streaming = streaming;
         m_lod = lod;
-        m_layout.cells = vmax(lod.tile_cells - lod.tile_cells % Chunk::SIZE, Chunk::SIZE);
+        m_layout.cells = vmax(lod.tile_chunks, 1) * Chunk::SIZE;
         if (changed) remesh_all();
     }
 
@@ -222,6 +222,7 @@ public:
                 for (const ColumnPos& c : m_selection.detail_columns)
                     for_each_chunk_in(c, [&](const ChunkPos& p, const ChunkRenderEntry& e) { if (e.meshed) put(p, e.connectivity); });
             });
+            
             m_cave_chunk = camera_chunk;
             m_cave_dirty = false;
         }
@@ -627,19 +628,19 @@ private:
         }
     }
 
-    World&                  m_world;
-    const WorldGenerator&   m_generator;
-    JobSystem&              m_jobs;
-    ChunkStreamer&          m_streamer;
-    ChunkMeshOptions        m_mesh_options;
-    StreamingSettings       m_streaming;
-    LodSettings             m_lod;
-    LodLayout               m_layout;
-    LodSelection            m_selection;
-    vector3d                m_camera{};
+    World&                m_world;
+    const WorldGenerator& m_generator;
+    JobSystem&            m_jobs;
+    ChunkStreamer&        m_streamer;
+    ChunkMeshOptions      m_mesh_options;
+    StreamingSettings     m_streaming;
+    LodSettings           m_lod;
+    LodLayout             m_layout;
+    LodSelection          m_selection;
+    vector3d              m_camera{};
 
-    ChunkMap                m_chunks;
-    TileMap                 m_tiles;
+    ChunkMap              m_chunks;
+    TileMap               m_tiles;
     std::unordered_map<ColumnPos, TerrainColumn, ColumnPosHash> m_columns;
     std::unordered_set<ChunkPos, ChunkPosHash>      m_wanted;
     std::unordered_set<LodTileKey, LodTileKeyHash>  m_tile_queue;
@@ -649,9 +650,9 @@ private:
     std::deque<LodTileKey>  m_tile_upload_order;
 
     std::unordered_map<LodTileKey, TileTransition, LodTileKeyHash> m_retiring_tiles;
-    std::unordered_map<ColumnPos, LodTileKey, ColumnPosHash>        m_retiring_columns;
-    std::unordered_set<ColumnPos, ColumnPosHash>                    m_suppressed_columns;
-    std::unordered_set<LodTileKey, LodTileKeyHash>                  m_suppressed_tiles;
+    std::unordered_map<ColumnPos, LodTileKey, ColumnPosHash>       m_retiring_columns;
+    std::unordered_set<ColumnPos, ColumnPosHash>                   m_suppressed_columns;
+    std::unordered_set<LodTileKey, LodTileKeyHash>                 m_suppressed_tiles;
 
     TerrainStats            m_totals;
     int                     m_mesh_jobs = 0;

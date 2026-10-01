@@ -51,6 +51,11 @@ public:
     bool has_hand_light() const noexcept { return m_has_hand_light; }
     const DynamicLight& hand_light() const noexcept { return m_hand_light; }
 
+    bool casts_capsule_shadow(fizmo::graphics::CapsuleOccluder3D& out, double alpha) const override {
+        out = fizmo::graphics::CapsuleOccluder3D::standing(interpolated_position(alpha), height(), capsule_radius());
+        return true;
+    }
+
     bool emits_light(DynamicLight& out, double alpha) const override {
         if (!m_has_hand_light) return false;
         out = m_hand_light;

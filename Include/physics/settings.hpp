@@ -3,12 +3,23 @@
 
 #include <memory>
 #include "air_resistance.hpp"
+#include "../core/limits.hpp"
 #include "fluid_resistance.hpp"
 
 namespace voxelspire {
 
 enum class AirModel : std::uint8_t { Keep = 0, None, TerminalCap, WorldHeight, Linear, Quadratic };
 enum class FluidModel : std::uint8_t { Keep = 0, None, Linear, TickDamping, Quadratic };
+
+struct PhysicsLimits {
+    static constexpr Bounds terminal_velocity { 5.0, 400.0 };
+    static constexpr Bounds fluid_density     { 100.0, 3000.0 };
+    static constexpr Bounds drag_coefficient  { 0.1, 3.0 };
+    static constexpr Bounds body_mass         { 10.0, 300.0 };
+    static constexpr Bounds fluid_linear_drag { 0.0, 20.0 };
+    static constexpr Bounds tick_damping      { 0.0, 1.0 };
+    static constexpr Bounds damping_ticks     { 1.0, 100.0 };
+};
 
 struct PhysicsSettings {
     static constexpr double DEFAULT_TERMINAL_VELOCITY = 78.4;
