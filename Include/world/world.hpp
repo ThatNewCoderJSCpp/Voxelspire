@@ -60,6 +60,7 @@ public:
     const ChunkMap&   chunks()  const noexcept { return m_chunks; }
     const ColumnMap&  columns() const noexcept { return m_columns; }
     const FluidRules& fluid_rules() const noexcept { return *m_settings.fluid_rules; }
+    std::uint64_t     revision()    const noexcept { return m_revision; }
 
     static ChunkPos chunk_pos_of(const BlockPos& p) noexcept {
         return { floor_div(p.x, Chunk::SIZE), floor_div(p.y, Chunk::SIZE), floor_div(p.z, Chunk::SIZE) };
@@ -111,7 +112,35 @@ public:
         const BlockId id = block_id_at(p);
         if (!m_registry->traits(id).fluid) return 0.0;
         if (block_id_at({ p.x, p.y, p.z + 1 }) == id) return 1.0;
-        return m_settings.fluid_rules->level(fluid_state(p));
+        return fluid_level(p, fluid_state(p));
+    }
+
+    double fluid_level(const BlockPos& p, std::uint8_t state) const noexcept {
+        const double level = m_settings.fluid_rules->level(state);
+        if (m_occupancy.empty()) return level;
+        auto it = m_occupancy.find(p);
+        return it == m_occupancy.end() ? level : vmin(it->second.level(level), 1.0);
+    }
+
+    FluidOccupancy occupancy(const BlockPos& p) const noexcept {
+        if (m_occupancy.empty()) return {};
+        auto it = m_occupancy.find(p);
+        return it == m_occupancy.end() ? FluidOccupancy{} : it->second;
+    }
+
+    void displace(const std::vector<AABB>& boxes) {
+        m_next_occupancy.clear();
+        if (m_settings.fluid_rules->displaces()) for (const AABB& box : boxes) occupy(box);
+
+        for (const auto& kv : m_next_occupancy) {
+            auto it = m_occupancy.find(kv.first);
+            if (it == m_occupancy.end() || it->second != kv.second) occupancy_changed(kv.first);
+        }
+
+        for (const auto& kv : m_occupancy)
+            if (m_next_occupancy.count(kv.first) == 0) occupancy_changed(kv.first);
+
+        m_occupancy.swap(m_next_occupancy);
     }
 
     double fluid_surface(const BlockPos& p) const noexcept { return p.z + fluid_height(p); }
@@ -181,10 +210,8 @@ public:
         if (!c->set(lx, ly, lz, id, state)) return false;
         if (m_light && before != id) m_light->block_changed(p, before, id);
 
-        for (int dz = -1; dz <= 1; ++dz)
-            for (int dy = -1; dy <= 1; ++dy)
-                for (int dx = -1; dx <= 1; ++dx) mark_changed(chunk_pos_of({ p.x + dx, p.y + dy, p.z + dz }));
-
+        mark_around(p);
+        ++m_revision;
         if (before != id) update_floor(colit->second, col, lx, ly, p.z, id);
         if (m_edited_set.insert(col).second) m_edited.push_back(col);
         wake_around(p);
@@ -222,6 +249,7 @@ public:
         }
 
         rebuild_floor(column, col);
+        ++m_revision;
         for (int z : column.chunk_zs) mark_changed({ col.x, col.y, z });
         m_column_events.emplace_back(col, ColumnEvent::Loaded);
 
@@ -246,6 +274,7 @@ public:
         }
 
         m_columns.erase(it);
+        ++m_revision;
         m_column_events.emplace_back(col, ColumnEvent::Unloaded);
         if (m_light) m_light->column_unloaded(col);
         return out;
@@ -281,6 +310,38 @@ private:
     static constexpr std::array<BlockPos, 4> HORIZONTAL_STEPS{ BlockPos{ 1, 0, 0 }, BlockPos{ -1, 0, 0 }, BlockPos{ 0, 1, 0 }, BlockPos{ 0, -1, 0 } };
     static constexpr std::array<BlockPos, 5> SPILL_STEPS{ BlockPos{ 1, 0, 0 }, BlockPos{ -1, 0, 0 }, BlockPos{ 0, 1, 0 }, BlockPos{ 0, -1, 0 }, BlockPos{ 0, 0, -1 } };
     static constexpr std::array<BlockPos, 7> WAKE_STEPS{ BlockPos{ 0, 0, 0 }, BlockPos{ 1, 0, 0 }, BlockPos{ -1, 0, 0 }, BlockPos{ 0, 1, 0 }, BlockPos{ 0, -1, 0 }, BlockPos{ 0, 0, 1 }, BlockPos{ 0, 0, -1 } };
+
+    using OccupancyMap = std::unordered_map<BlockPos, FluidOccupancy, BlockPosHash>;
+
+    void mark_around(const BlockPos& p) {
+        for (int dz = -1; dz <= 1; ++dz)
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx) mark_changed(chunk_pos_of({ p.x + dx, p.y + dy, p.z + dz }));
+    }
+
+    void occupy(const AABB& box) {
+        const BlockPos lo = BlockPos::containing(box.min);
+        const BlockPos hi = BlockPos::containing(box.max);
+        const BlockTraits* traits = m_registry->traits_table();
+
+        for (int z = lo.z; z <= hi.z; ++z)
+            for (int y = lo.y; y <= hi.y; ++y)
+                for (int x = lo.x; x <= hi.x; ++x) {
+                    const BlockPos p{ x, y, z };
+                    const BlockId id = block_id_at(p);
+                    if (id != AIR_ID && !traits[id].fluid) continue;
+                    const double wx = vmin(box.max.x, x + 1.0) - vmax(box.min.x, static_cast<double>(x));
+                    const double wy = vmin(box.max.y, y + 1.0) - vmax(box.min.y, static_cast<double>(y));
+                    const double bottom = box.min.z - z, top = box.max.z - z;
+                    const FluidOccupancy occ = FluidOccupancy::of(wx * wy, bottom, top);
+                    if (!occ.empty()) m_next_occupancy[p].merge(occ);
+                }
+    }
+
+    void occupancy_changed(const BlockPos& p) {
+        if (m_registry->traits(block_id_at(p)).fluid) mark_around(p);
+        wake_around(p);
+    }
 
     void wake_around(const BlockPos& p) {
         if (!m_settings.fluid_rules->flows()) return;
@@ -391,6 +452,9 @@ private:
     std::unordered_set<ColumnPos, ColumnPosHash>   m_edited_set;
     std::unique_ptr<LightEngine>                   m_light;
     std::vector<BlockPos>                          m_fluid_wakes;
+    OccupancyMap                                   m_occupancy;
+    OccupancyMap                                   m_next_occupancy;
+    std::uint64_t                                  m_revision = 0;
 };
 
 } // namespace voxelspire

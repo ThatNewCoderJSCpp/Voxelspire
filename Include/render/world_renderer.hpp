@@ -2,6 +2,8 @@
 #define VOXELSPIRE_RENDER_WORLD_RENDERER_HPP
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <vector>
 #include "terrain_meshes.hpp"
 
@@ -158,12 +160,52 @@ public:
     }
 
 private:
+    static constexpr std::size_t PORTAL_EDGES = 4;
+
     struct MirrorView {
-        fizmo::graphics::Camera3D camera;
-        vector3d                  eye;
-        vector3d                  normal;
-        double                    offset = 0.0;
+        fizmo::graphics::Camera3D            camera;
+        vector3d                             eye;
+        vector3d                             normal;
+        double                               offset = 0.0;
+        bool                                 portal = false;
+        std::array<vector3d, PORTAL_EDGES>   sides{};
     };
+
+    static void build_portal(MirrorView& v, const fizmo::graphics::ReflectionPlane3D& plane) {
+        if (!plane.bounded) return;
+        const int axis = std::fabs(v.normal.x) >= std::fabs(v.normal.y) && std::fabs(v.normal.x) >= std::fabs(v.normal.z) ? 0 : (std::fabs(v.normal.y) >= std::fabs(v.normal.z) ? 1 : 2);
+        const int u = (axis + 1) % 3, w = (axis + 2) % 3;
+        std::array<vector3d, PORTAL_EDGES> corners{};
+        const double us[PORTAL_EDGES] = { component(plane.lo, u), component(plane.hi, u), component(plane.hi, u), component(plane.lo, u) };
+        const double ws[PORTAL_EDGES] = { component(plane.lo, w), component(plane.lo, w), component(plane.hi, w), component(plane.hi, w) };
+
+        for (std::size_t i = 0; i < PORTAL_EDGES; ++i) {
+            set_component(corners[i], axis, component(plane.point, axis));
+            set_component(corners[i], u, us[i]);
+            set_component(corners[i], w, ws[i]);
+        }
+
+        const vector3d middle = (corners[0] + corners[2]) * 0.5;
+
+        for (std::size_t i = 0; i < PORTAL_EDGES; ++i) {
+            vector3d n = (corners[i] - v.eye).cross(corners[(i + 1) % PORTAL_EDGES] - v.eye);
+            if (n.dot(middle - v.eye) < 0.0) n = n * -1.0;
+            v.sides[i] = n;
+        }
+
+        v.portal = true;
+    }
+
+    static bool through_portal(const MirrorView& v, const vector3d& lo, const vector3d& hi) noexcept {
+        if (!v.portal) return true;
+
+        for (const vector3d& n : v.sides) {
+            const vector3d far{ n.x >= 0.0 ? hi.x : lo.x, n.y >= 0.0 ? hi.y : lo.y, n.z >= 0.0 ? hi.z : lo.z };
+            if (n.dot(far - v.eye) < 0.0) return false;
+        }
+
+        return true;
+    }
 
     static vector3d reflect_point(const vector3d& p, const vector3d& n, double offset) noexcept { return p - n * (2.0 * (n.dot(p) - offset)); }
     static vector3d reflect_direction(const vector3d& d, const vector3d& n) noexcept { return d - n * (2.0 * n.dot(d)); }
@@ -182,6 +224,7 @@ private:
             v.eye = reflect_point(camera.position(), v.normal, v.offset);
             v.camera.set_position(v.eye);
             v.camera.look_in(reflect_direction(camera.forward(), v.normal), reflect_direction(camera.up(), v.normal));
+            build_portal(v, plane);
             m_views.push_back(v);
         }
     }
@@ -192,7 +235,7 @@ private:
         for (const MirrorView& v : m_views) {
             const double reach = std::fabs(v.normal.x) * half.x + std::fabs(v.normal.y) * half.y + std::fabs(v.normal.z) * half.z;
             if (v.normal.dot(center) + reach <= v.offset) continue;
-            if (v.camera.is_visible(lo, hi)) return true;
+            if (through_portal(v, lo, hi) && v.camera.is_visible(lo, hi)) return true;
         }
 
         return false;

@@ -90,18 +90,19 @@ private:
 
     static void capture_levels(const World& world, const Chunk& chunk, ChunkSnapshot& snap) {
         const BlockTraits* traits = world.blocks().traits_table();
-        const FluidRules& rules = world.fluid_rules();
         const BlockPos o = snap.origin();
 
-        for (int y = -1; y <= Chunk::SIZE; ++y)
-            for (int z = -1; z <= Chunk::SIZE; ++z)
+        for (int y = -1; y <= Chunk::SIZE; ++y) {
+            for (int z = -1; z <= Chunk::SIZE; ++z) {
                 for (int x = -1; x <= Chunk::SIZE; ++x) {
                     if (!traits[snap.at(x, y, z)].fluid) continue;
                     const bool inside = Chunk::in_bounds(x, y, z);
                     const std::uint8_t state = inside ? chunk.state(x, y, z) : world.fluid_state({ o.x + x, o.y + y, o.z + z });
-                    const double level = rules.level(state);
+                    const double level = world.fluid_level({ o.x + x, o.y + y, o.z + z }, state);
                     snap.levels[index(x, y, z)] = static_cast<std::uint8_t>(vclamp(std::lround(level * LEVEL_SCALE), 0L, static_cast<long>(LEVEL_SCALE)));
                 }
+            }
+        }
     }
 };
 
@@ -133,7 +134,6 @@ struct ChunkConnectivity {
 
         if (open_count == V) { out.bits = ALL; return out; }
         if (open_count == 0) return out;
-
         std::vector<int> stack;
         stack.reserve(V);
 
@@ -365,8 +365,8 @@ private:
         constexpr int S = Chunk::SIZE;
         std::size_t faces = 0;
 
-        for (int y = 0; y < S; ++y)
-            for (int z = 0; z < S; ++z)
+        for (int y = 0; y < S; ++y) {
+            for (int z = 0; z < S; ++z) {
                 for (int x = 0; x < S; ++x) {
                     const BlockId id = snap.at(x, y, z);
                     const BlockTraits& t = traits[id];
@@ -389,6 +389,8 @@ private:
                         ++faces;
                     }
                 }
+            }
+        }
 
         return faces;
     }
@@ -417,8 +419,8 @@ private:
         constexpr int S = Chunk::SIZE;
         std::size_t faces = 0;
 
-        for (int y = 0; y < S; ++y)
-            for (int z = 0; z < S; ++z)
+        for (int y = 0; y < S; ++y) {
+            for (int z = 0; z < S; ++z) {
                 for (int x = 0; x < S; ++x) {
                     const BlockId id = snap.at(x, y, z);
                     const BlockTraits& t = traits[id];
@@ -443,6 +445,8 @@ private:
                         ++faces;
                     }
                 }
+            }
+        }
 
         return faces;
     }
@@ -460,7 +464,11 @@ private:
     }
 
     struct LightSum {
-        int sky = 0, red = 0, green = 0, blue = 0, count = 0;
+        int sky = 0;
+        int red = 0;
+        int green = 0;
+        int blue = 0;
+        int count = 0;
 
         void add(std::uint16_t v) noexcept {
             sky   += PackedLight::sky(v);
@@ -475,6 +483,7 @@ private:
                 const int avg = (total * LightLevel::BYTE_SCALE + count / 2) / count;
                 return static_cast<std::uint8_t>(vmax(avg, floor_level * LightLevel::BYTE_SCALE));
             };
+
             return fizmo::graphics::BakedLight(scale(red, own.red), scale(green, own.green), scale(blue, own.blue), scale(sky, 0)).packed();
         }
     };

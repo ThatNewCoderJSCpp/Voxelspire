@@ -90,14 +90,7 @@ struct WorldSettings {
 };
 
 struct WorldLimits {
-    static constexpr Bounds gravity          { 0.0, 100.0 };
-    static constexpr Bounds fluid_buoyancy   { 0.0, 1.0 };
-    static constexpr Bounds fluid_sink_speed { 0.0, 20.0 };
-    static constexpr Bounds current_speed    { 0.0, 10.0 };
-    static constexpr Bounds current_push     { 0.0, 60.0 };
-    static constexpr Bounds wade_slowdown    { 0.0, 0.9 };
-    static constexpr Bounds fall_break_depth { 0.5, 16.0 };
-    static constexpr Bounds fluid_updates    { 64.0, 65536.0 };
+    static constexpr Bounds gravity { 0.0, 100.0 };
 };
 
 struct FlatLayer {
@@ -207,7 +200,7 @@ struct StreamingSettings {
 };
 
 struct StreamingLimits {
-    static constexpr Bounds simulation_distance   { 1.0, 32.0 };
+    static constexpr Bounds simulation_distance   { 1.0, 64.0 };
     static constexpr Bounds detail_distance       { 1.0, 64.0 };
     static constexpr Bounds unload_margin         { 0.0, 8.0 };
     static constexpr Bounds max_column_jobs       { 1.0, 512.0 };
@@ -378,6 +371,7 @@ struct EntityLimits {
 struct GameSettings {
     WorldSettings      world;
     PhysicsSettings    physics;
+    WaterSettings      water;
     CharacterSettings  character;
     InputBindings      bindings = InputBindings::defaults();
     MenuSettings       menu;

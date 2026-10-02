@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include "../lighting/presets.hpp"
+#include "../physics/water_presets.hpp"
 #include "settings_registry.hpp"
 
 namespace voxelspire {
@@ -22,6 +23,7 @@ struct SettingsTabs {
     static constexpr const char* CONTROLS    = "controls";
     static constexpr const char* CHARACTER   = "character";
     static constexpr const char* PHYSICS     = "physics";
+    static constexpr const char* WATER       = "water";
     static constexpr const char* TIME        = "time_sky";
     static constexpr const char* CELESTIAL   = "sun_moon_stars";
     static constexpr const char* LIGHTING    = "lighting";
@@ -37,12 +39,14 @@ class SettingsPages {
 public:
     static constexpr const char* CUSTOM = "custom";
 
-    static void register_all(SettingsRegistry& registry, const SettingsHooks& hooks, const LightingPresets& presets) {
+    static void register_all(SettingsRegistry& registry, const SettingsHooks& hooks, const LightingPresets& presets, const WaterPresets& water_presets) {
         const LightingPresets* list = &presets;
+        const WaterPresets* waters = &water_presets;
         registry.add_tab(SettingsTabs::GENERAL, "General", "Display, camera, mouse and this menu", [hooks](SettingsPage& p) { general(p, hooks); });
         registry.add_tab(SettingsTabs::CONTROLS, "Controls", "Change, add or remove key bindings", controls);
         registry.add_tab(SettingsTabs::CHARACTER, "Character", "Body size, movement speeds and the hand light", character);
-        registry.add_tab(SettingsTabs::PHYSICS, "Physics", "Gravity, air resistance, water and entity pushing", physics);
+        registry.add_tab(SettingsTabs::PHYSICS, "Physics", "Gravity, air resistance and entity pushing", physics);
+        registry.add_tab(SettingsTabs::WATER, "Water", "Presets, how water flows, swimming and wading", [waters](SettingsPage& p) { water(p, *waters); });
         registry.add_tab(SettingsTabs::TIME, "Time & Sky", "Day length, tick rate, sun path and sky colors", [hooks](SettingsPage& p) { time(p, hooks); });
         registry.add_tab(SettingsTabs::CELESTIAL, "Sun, Moon & Stars", "Look, detail and light of the sun, moon and stars", celestial);
         registry.add_tab(SettingsTabs::LIGHTING, "Lighting", "Presets, light engine, brightness and light sources", [list](SettingsPage& p) { lighting(p, *list); });
@@ -61,6 +65,11 @@ private:
     static void mark_custom(SettingsPage& p) {
         GameSettings* g = &p.live();
         p.touching([g] { g->lighting.name = CUSTOM; });
+    }
+
+    static void mark_water_custom(SettingsPage& p) {
+        GameSettings* g = &p.live();
+        p.touching([g] { g->water.name = CUSTOM; });
     }
 
     static void general(SettingsPage& p, const SettingsHooks& hooks) {
@@ -183,11 +192,10 @@ private:
         using EL = EntityLimits;
         GameSettings* g = &p.live();
         auto ph = [](auto P::*m) { return field(&GameSettings::physics, m); };
-        auto world = [](auto WorldSettings::*m) { return field(&GameSettings::world, m); };
         auto ent = [](auto EntitySettings::*m) { return field(&GameSettings::entities, m); };
 
         p.header("Gravity").applies(Apply::Physics);
-        p.decimal("Gravity", "How fast things fall. Earth-like is about 32 in blocks.", world(&WorldSettings::gravity), WL::gravity).unit("b/s2").decimals(1);
+        p.decimal("Gravity", "How fast things fall. Earth-like is about 32 in blocks.", field(&GameSettings::world, &WorldSettings::gravity), WL::gravity).unit("b/s2").decimals(1);
 
         p.header("Air");
 
@@ -201,60 +209,84 @@ private:
         p.when([g] { const AirModel m = g->physics.air_model; return m == AirModel::TerminalCap || m == AirModel::Linear || m == AirModel::Quadratic; });
         p.decimal("Terminal velocity", "Top falling speed in air.", ph(&P::terminal_velocity), PL::terminal_velocity).unit("b/s").decimals(1);
 
-        p.always().header("Water");
-
-        p.choice(
-            "Water resistance", 
-            "How water slows things down. Realistic uses water drag, Minecraft-like slows a fixed amount per tick.", 
-            ph(&P::fluid_model),
-            { "World default", "None", "Linear", "Minecraft-like", "Realistic" }
-        );
-        
-        p.when([g] { return g->physics.fluid_model == FluidModel::Quadratic; });
-        p.decimal("Water density", "Heavier fluids slow you more.", ph(&P::fluid_density), PL::fluid_density).unit("kg/m3").decimals(1);
-        p.decimal("Drag coefficient", "How much your body shape resists water.", ph(&P::drag_coefficient), PL::drag_coefficient);
-        p.decimal("Body mass", "Heavier bodies are slowed less.", ph(&P::body_mass), PL::body_mass).unit("kg").decimals(1);
-        p.when([g] { return g->physics.fluid_model == FluidModel::Linear; });
-        p.decimal("Linear drag", "Fraction of extra speed lost per second.", ph(&P::fluid_linear_drag), PL::fluid_linear_drag).unit("/s");
-        p.when([g] { return g->physics.fluid_model == FluidModel::TickDamping; });
-        p.decimal("Speed kept per tick", "Minecraft keeps 0.8 of its speed each tick in water.", ph(&P::tick_damping), PL::tick_damping);
-        p.integer("Damping ticks per second", "How many of those ticks happen each second.", ph(&P::damping_ticks), PL::damping_ticks).unit("/s");
-        p.always();
-        p.decimal("Buoyancy", "How much of gravity the water cancels when fully under.", world(&WorldSettings::fluid_buoyancy), WL::fluid_buoyancy);
-        p.decimal("Free sinking speed", "Fastest you sink without swimming down.", world(&WorldSettings::fluid_sink_speed), WL::fluid_sink_speed).unit("b/s");
-
-                p.decimal("Current speed", "How fast flowing water carries you along.", world(&WorldSettings::current_speed), WL::current_speed).unit("b/s").decimals(1);
-        p.decimal("Current strength", "How quickly flowing water gets you up to its speed.", world(&WorldSettings::current_push), WL::current_push).unit("b/s2").decimals(1);
-        p.decimal("Wading slowdown", "How much walking slows as water gets deeper. 0 means water never slows walking.", world(&WorldSettings::wade_slowdown), WL::wade_slowdown);
-        p.decimal("Depth that stops a fall", "Water this deep cancels a fall completely. Shallower water cancels part of it.", world(&WorldSettings::fall_break_depth), WL::fall_break_depth).unit("blocks").decimals(1);
-
-        p.header("Water flow");
-
-        p.choice(
-            "Water flow",
-            "How water spreads. Minecraft-like has sources that spread a few blocks and never run out. Realistic moves a fixed amount of water, so lakes can drain and puddles spread thin.",
-            ph(&P::flow_model),
-            { "World default", "Still", "Minecraft-like", "Realistic" }
-        );
-
-        p.when([g] { return g->physics.flow_model == FlowModel::Minecraft; });
-        p.decimal("Flow delay", "Time between each step of spreading. Minecraft uses 0.25 seconds.", ph(&P::minecraft_interval), PL::flow_interval).unit("s");
-        p.integer("Spread distance", "How many blocks water flows sideways from a source.", ph(&P::flow_spread), PL::flow_spread).unit("blocks");
-        p.integer("Slope search", "How far water looks for a drop to flow toward.", ph(&P::slope_search), PL::slope_search).unit("blocks");
-        p.toggle("Infinite sources", "Two sources next to each other make a new source, like Minecraft.", ph(&P::infinite_sources));
-        p.when([g] { return g->physics.flow_model == FlowModel::Realistic; });
-        p.decimal("Flow delay", "Time between each step of flowing. Lower is faster but uses more processing.", ph(&P::realistic_interval), PL::flow_interval).unit("s");
-        p.decimal("Thinnest puddle", "Water stops spreading once a puddle is this thin.", ph(&P::min_depth), PL::min_depth).unit("blocks").decimals(3);
-        p.always();
-        p.integer("Updates per step", "Most water blocks updated in one step. Lower protects the frame rate during big floods.", world(&WorldSettings::fluid_updates), WL::fluid_updates);
-
-        p.header("Entities").applies(Apply::Entities);
+        p.always().header("Entities").applies(Apply::Entities);
         p.decimal("Push strength", "How hard overlapping entities push each other apart.", ent(&EntitySettings::push_acceleration), EL::push_acceleration).unit("b/s2").decimals(1);
         p.decimal("Max push speed", "Top speed entities are pushed apart at.", ent(&EntitySettings::max_push_speed), EL::max_push_speed).unit("b/s");
         p.integer("Octree node size", "Entities per octree node before it splits. Affects performance only.", ent(&EntitySettings::octree_max_per_node), EL::octree_max_per_node);
         p.integer("Octree depth", "Deepest octree level. Affects performance only.", ent(&EntitySettings::octree_max_depth), EL::octree_max_depth);
         p.decimal("Octree looseness", "How much octree cells overlap. Affects performance only.", ent(&EntitySettings::octree_looseness), EL::octree_looseness);
         p.decimal("Octree margin", "Extra space around the octree. Affects performance only.", ent(&EntitySettings::octree_margin), EL::octree_margin).unit("blocks");
+    }
+
+    static void water(SettingsPage& p, const WaterPresets& presets) {
+        using W  = WaterSettings;
+        using WL = WaterLimits;
+        GameSettings* g = &p.live();
+        GameSettings* base = &p.base_settings();
+        const WaterPresets* list = &presets;
+        auto w = [](auto W::*m) { return field(&GameSettings::water, m); };
+
+        p.header("Preset").applies(Apply::Physics);
+
+        p.custom_choice(
+            "Preset", "Load a whole water setup at once, from still pools to fully simulated water. Changing anything below makes it Custom. Mods can add more presets.",
+            [list] { return list->names(); },
+            [g, list] { return list->index_of(g->water.name); },
+            [g, list](int i) { if (const W* preset = list->at(i)) g->water = *preset; }
+        ).defaults([g, base] { g->water = base->water; }, [g, base] { return g->water.name == base->water.name; });
+
+        p.header("Flow");
+        mark_water_custom(p);
+
+        p.choice(
+            "Water flow",
+            "How water spreads. Minecraft-like has sources that spread a few blocks and never run out. Realistic moves a fixed amount of water, so it runs downhill, drains away and spreads thin.",
+            w(&W::flow),
+            { "Still", "Minecraft-like", "Realistic" }
+        );
+
+        p.when([g] { return g->water.flow == FlowModel::Minecraft; });
+        p.decimal("Flow delay", "Time between each step of spreading. Minecraft uses 0.25 seconds.", w(&W::minecraft_interval), WL::flow_interval).unit("s");
+        p.integer("Spread distance", "How many blocks water flows sideways from a source.", w(&W::flow_spread), WL::flow_spread).unit("blocks");
+        p.integer("Slope search", "How far water looks for a drop to flow toward.", w(&W::slope_search), WL::slope_search).unit("blocks");
+        p.toggle("Infinite sources", "Two sources next to each other make a new source, like Minecraft.", w(&W::infinite_sources));
+        p.when([g] { return g->water.flow == FlowModel::Realistic; });
+        p.decimal("Step time", "Time between each step of flowing. Lower is faster but uses more processing.", w(&W::realistic_interval), WL::flow_interval).unit("s");
+        p.decimal("Thinnest puddle", "Water stops spreading on flat ground once it is this thin.", w(&W::min_depth), WL::min_depth).unit("blocks").decimals(3);
+        p.toggle("Run toward drops", "Water flows toward nearby edges and holes and pours over them, even when it is too thin to spread.", w(&W::seek_drops));
+        p.when([g] { return g->water.flow == FlowModel::Realistic && g->water.seek_drops; });
+        p.integer("Drop search", "How far water looks for an edge or hole to run toward. Higher drains wider areas but uses more processing.", w(&W::drop_search), WL::drop_search).unit("blocks");
+        p.when([g] { return g->water.flow == FlowModel::Realistic; });
+        p.toggle("Displacement", "Players and other entities push water out of the way, so the water rises around them.", w(&W::displacement));
+        p.when([g] { return g->water.flow != FlowModel::Still; });
+        p.integer("Updates per step", "Most water blocks updated in one step. Lower protects the frame rate during big floods.", w(&W::updates), WL::updates);
+
+        p.always().header("Resistance");
+
+        p.choice(
+            "Water resistance",
+            "How water slows things down. Realistic uses water drag, Minecraft-like slows a fixed amount per tick.",
+            w(&W::resistance),
+            { "None", "Linear", "Minecraft-like", "Realistic" }
+        );
+
+        p.when([g] { return g->water.resistance == FluidModel::Quadratic; });
+        p.decimal("Water density", "Heavier fluids slow you more.", w(&W::fluid_density), WL::fluid_density).unit("kg/m3").decimals(1);
+        p.decimal("Drag coefficient", "How much your body shape resists water.", w(&W::drag_coefficient), WL::drag_coefficient);
+        p.decimal("Body mass", "Heavier bodies are slowed less.", w(&W::body_mass), WL::body_mass).unit("kg").decimals(1);
+        p.when([g] { return g->water.resistance == FluidModel::Linear; });
+        p.decimal("Linear drag", "Fraction of extra speed lost per second.", w(&W::linear_drag), WL::linear_drag).unit("/s");
+        p.when([g] { return g->water.resistance == FluidModel::TickDamping; });
+        p.decimal("Speed kept per tick", "Minecraft keeps 0.8 of its speed each tick in water.", w(&W::tick_damping), WL::tick_damping);
+        p.integer("Damping ticks per second", "How many of those ticks happen each second.", w(&W::damping_ticks), WL::damping_ticks).unit("/s");
+
+        p.always().header("Swimming and wading");
+        p.decimal("Buoyancy", "How much of gravity the water cancels when fully under.", w(&W::buoyancy), WL::buoyancy);
+        p.decimal("Free sinking speed", "Fastest you sink without swimming down.", w(&W::sink_speed), WL::sink_speed).unit("b/s");
+        p.decimal("Current speed", "How fast flowing water carries you along.", w(&W::current_speed), WL::current_speed).unit("b/s").decimals(1);
+        p.decimal("Current strength", "How quickly flowing water gets you up to its speed.", w(&W::current_push), WL::current_push).unit("b/s2").decimals(1);
+        p.decimal("Wading slowdown", "How much walking slows as water gets deeper. 0 means water never slows walking.", w(&W::wade_slowdown), WL::wade_slowdown);
+        p.decimal("Depth that stops a fall", "Water this deep cancels a fall completely. Shallower water cancels part of it.", w(&W::fall_break_depth), WL::fall_break_depth).unit("blocks").decimals(1);
     }
 
     template <typename Seconds>
@@ -667,7 +699,10 @@ private:
         p.integer("Reflecting surfaces", "How many mirrors or water surfaces can reflect at once.", l(&L::max_reflection_planes), LL::max_reflection_planes);
         p.decimal("Water resolution", "Detail of water reflections. 1 is full screen resolution.", l(&L::reflection_resolution), LL::reflection_resolution).unit("x");
         p.decimal("Mirror resolution", "Detail of mirror reflections. 1 is full screen resolution.", l(&L::mirror_resolution), LL::mirror_resolution).unit("x");
-        p.integer("Search distance", "How far away a mirror or water can be to reflect.", l(&L::reflection_plane_distance), LL::reflection_plane_distance).unit("blocks");
+        p.toggle("Reflect at any distance", "Mirrors and water keep reflecting whenever they are on screen, however far away they are.", l(&L::reflect_any_distance));
+        p.when([g] { return g->lighting.planar_reflections && !g->lighting.reflect_any_distance; });
+        p.integer("Reflection distance", "Mirrors and water farther away than this stop reflecting and show the plain surface.", l(&L::reflection_plane_distance), LL::reflection_plane_distance).unit("blocks").logarithmic();
+        p.when([g] { return g->lighting.planar_reflections; });
         p.integer("Reflected view distance", "How far the world is drawn inside reflections.", l(&L::reflection_view_chunks), LL::reflection_view_chunks).unit("chunks");
         p.decimal("Ripple distortion", "How much waves bend water reflections.", l(&L::reflection_distortion), LL::reflection_distortion).decimals(3);
         p.toggle("Water reflects the world", "Let water use real reflections too, not just mirrors.", l(&L::water_planar_reflections));

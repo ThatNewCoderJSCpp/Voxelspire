@@ -78,6 +78,13 @@ private:
         std::uint8_t state(const BlockPos& p) const override { return m_world.fluid_state(p); }
         void put(const BlockPos& p, std::uint8_t state) override { m_world.set_block(p, m_fluid, state); }
         void clear(const BlockPos& p) override { m_world.set_block(p, AIR_ID); }
+        FluidOccupancy occupancy(const BlockPos& p) const override { return m_world.occupancy(p); }
+
+        FluidCell look(const BlockPos& p) const override {
+            const BlockId id = m_world.block_id_at(p);
+            if (id == m_fluid) return { false, true, m_world.fluid_state(p) };
+            return { id == AIR_ID && m_world.in_build_range(p) && m_world.column_loaded(World::column_of(p)), false, 0 };
+        }
 
     private:
         World&  m_world;
@@ -136,13 +143,13 @@ private:
         m_stats.updated = updated;
     }
 
-    std::vector<BlockPos>                          m_pending;
-    std::unordered_set<BlockPos, BlockPosHash>     m_pending_set;
-    std::vector<BlockPos>                          m_current;
-    std::vector<BlockPos>                          m_dormant;
-    double                                         m_time    = 0.0;
-    double                                         m_recheck = 0.0;
-    FluidStats                                     m_stats;
+    std::vector<BlockPos>                      m_pending;
+    std::unordered_set<BlockPos, BlockPosHash> m_pending_set;
+    std::vector<BlockPos>                      m_current;
+    std::vector<BlockPos>                      m_dormant;
+    double                                     m_time    = 0.0;
+    double                                     m_recheck = 0.0;
+    FluidStats                                 m_stats;
 };
 
 } // namespace voxelspire

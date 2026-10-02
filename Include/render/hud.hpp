@@ -49,6 +49,7 @@ struct HudInfo {
     LightLevel    light_here;
     std::size_t   dynamic_lights     = 0;
     std::size_t   shadow_casters     = 0;
+    std::string   water_preset;
     std::string   fluid_model;
     std::string   flow_model;
     FluidStats    fluids;
@@ -108,7 +109,7 @@ public:
         if (hs.sections.performance) {
             header("Performance");
             row("FPS", format("%.0f", info.fps_average));
-            row("Draws", format("%zu meshes in %zu batches", st.batch_items, st.batches));
+            row("Draws", format("%zu meshes in %zu batches: %zu on screen, %zu shadow, %zu reflection only", st.batch_items, st.batches, st.batch_items - st.shadow_casters - st.chunks_reflected, st.shadow_casters, st.chunks_reflected));
             row("Jobs", format("%zu gen, %zu mesh, %zu LOD, %zu uploads (%d threads)", info.streaming.jobs_in_flight, t.mesh_jobs, t.lod_jobs, t.pending_uploads, info.worker_threads));
             row("Mesh memory", format("%.1f MB GPU, %.1f MB RAM", t.gpu_mesh_bytes / MB, t.cpu_mesh_bytes / MB));
         }
@@ -153,7 +154,7 @@ public:
             row("Particles", format("%zu (%zu emitters)", info.particles, info.particle_emitters));
             if (std::isfinite(info.terminal_velocity)) row("Air", format("%s, terminal %.1f b/s", info.air_model.c_str(), info.terminal_velocity));
             else row("Air", info.air_model + ", no terminal velocity");
-            row("Fluids", info.fluid_model);
+            row("Fluids", format("%s preset, %s", info.water_preset.c_str(), info.fluid_model.c_str()));
             row("Water flow", format("%s, %zu waiting, %zu updated, %zu far away", info.flow_model.c_str(), info.fluids.pending, info.fluids.updated, info.fluids.dormant));
         }
 
@@ -202,11 +203,19 @@ private:
         row("Light level", format("%d / %d, %s", level, LightLimits::MAX, source), { { level / max, hs.level_meter, 1.0 } });
         row("Sky light", sky_text, { { sky_now / max, hs.sky_meter, 1.0, lh.sky / max } });
         
-        row("Block light", format("%d / %d  (R %d, G %d, B %d)", block, LightLimits::MAX, lh.red, lh.green, lh.blue),
-            { { 1.0, Color(byte(lh.red), byte(lh.green), byte(lh.blue)), SWATCH_WIDTH },
-              { lh.red / max, hs.red_meter, CHANNEL_WIDTH },
-              { lh.green / max, hs.green_meter, CHANNEL_WIDTH },
-              { lh.blue / max, hs.blue_meter, CHANNEL_WIDTH } });
+        row(
+            "Block light", 
+            format("%d / %d  (R %d, G %d, B %d)", 
+                block, LightLimits::MAX, 
+                lh.red, lh.green, lh.blue
+            ),
+            { 
+                { 1.0, Color(byte(lh.red), byte(lh.green), byte(lh.blue)), SWATCH_WIDTH },
+                { lh.red / max, hs.red_meter, CHANNEL_WIDTH },
+                { lh.green / max, hs.green_meter, CHANNEL_WIDTH },
+                { lh.blue / max, hs.blue_meter, CHANNEL_WIDTH } 
+            }
+        );
     }
 
     int meters_width(const HudRow& row, double size, const HudSettings& hs) const noexcept {

@@ -107,6 +107,7 @@ struct LightingSettings {
     double       reflection_resolution      = 0.5;
     double       mirror_resolution          = 0.5;
     double       reflection_distortion      = 0.02;
+    bool         reflect_any_distance       = true;
     double       reflection_plane_distance  = 48.0;
     int          reflection_view_chunks     = 8;
     bool         water_planar_reflections   = true;
@@ -270,7 +271,7 @@ struct LightingLimits {
     static constexpr Bounds reflection_resolution       { 0.25, 1.0 };
     static constexpr Bounds mirror_resolution           { 0.25, 1.0 };
     static constexpr Bounds reflection_distortion       { 0.0, 0.1 };
-    static constexpr Bounds reflection_plane_distance   { 8.0, 128.0 };
+    static constexpr Bounds reflection_plane_distance   { 8.0, 1024.0 };
     static constexpr Bounds reflection_view_chunks      { 1.0, 32.0 };
     static constexpr Bounds underwater_density          { 0.0, 1.0 };
     static constexpr Bounds exposure                    { 0.1, 3.0 };

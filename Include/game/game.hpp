@@ -16,6 +16,7 @@
 #include "../lighting/director.hpp"
 #include "../lighting/presets.hpp"
 #include "../lighting/world_light.hpp"
+#include "../physics/water_presets.hpp"
 #include "../particles/system.hpp"
 #include "../render/block_outline_renderer.hpp"
 #include "../render/capsule_renderer.hpp"
@@ -64,7 +65,7 @@ public:
         m_camera.add_rig(std::make_unique<ThirdPersonFrontRig>());
         apply_character();
         apply_physics();
-        SettingsPages::register_all(m_settings_registry, make_hooks(), m_presets);
+        SettingsPages::register_all(m_settings_registry, make_hooks(), m_presets, m_water_presets);
     }
 
     ~Game() { m_jobs.shutdown(); }
@@ -163,7 +164,7 @@ public:
         const bool third_person = m_camera.shows_player();
         const bool show_body = third_person || m_settings.render.first_person_body;
         gather_occluders(show_body);
-        m_reflections.update(m_world, eye, m_camera.camera().forward(), m_settings.lighting);
+        m_reflections.update(m_world, m_camera.camera(), m_settings.lighting, m_settings.render.render_distance_blocks());
         m_lighting.set_reflection_planes(m_reflections.planes());
         renderer.set_scene_lighting(m_lighting.build(m_sky, m_world, eye, m_frame_lights, m_seconds, submerged ? &medium : nullptr));
         renderer.begin_3d(m_camera.camera());
@@ -175,7 +176,7 @@ public:
         options.face_culling    = m_settings.render.face_culling;
         options.shadow_distance = m_lighting.shadows() ? m_lighting.shadow_distance() : 0.0;
         options.reflections     = m_reflections.planes();
-        options.reflection_distance = static_cast<double>(m_settings.lighting.reflection_view_chunks) * Chunk::SIZE;
+        options.reflection_distance = vmin(static_cast<double>(m_settings.lighting.reflection_view_chunks) * Chunk::SIZE + m_reflections.farthest(), options.render_distance);
         m_stats = m_world_renderer.render(renderer, m_terrain, m_camera.camera(), options);
         m_particles.render(renderer, eye, [this](const BlockPos& b) { return m_lighting.render_light_at(m_world, b.center()); });
 
@@ -260,6 +261,7 @@ public:
 
     SettingsRegistry& settings_registry() noexcept { return m_settings_registry; }
     LightingPresets&  lighting_presets()  noexcept { return m_presets; }
+    WaterPresets&     water_presets()     noexcept { return m_water_presets; }
 
     bool take_display_change() noexcept { const bool d = m_display_dirty; m_display_dirty = false; return d; }
 
@@ -321,6 +323,7 @@ public:
         info.light_here          = light_level_at(m_player->eye_position(m_alpha));
         info.dynamic_lights      = m_lighting.scene().point_lights.size();
         info.shadow_casters      = m_stats.shadow_casters;
+        info.water_preset        = m_settings.water.name;
         info.fluid_model         = m_world.settings().fluid_resistance->id();
         info.flow_model          = m_world.fluid_rules().id();
         info.fluids              = m_fluids.stats();
@@ -470,19 +473,22 @@ private:
     }
 
     void apply_physics() {
+        const WaterSettings& water = m_settings.water;
         WorldSettings w      = m_world.settings();
         w.gravity            = m_settings.world.gravity;
         w.air_resistance     = m_settings.physics.air_resistance(w.gravity, m_settings.world.air_resistance);
-        w.fluid_resistance   = m_settings.physics.fluid_resistance(m_settings.world.fluid_resistance);
-        w.fluid_buoyancy     = m_settings.world.fluid_buoyancy;
-        w.fluid_sink_speed   = m_settings.world.fluid_sink_speed;
-        w.fluid_rules        = m_settings.physics.fluid_rules(m_settings.world.fluid_rules);
-        w.current_speed      = m_settings.world.current_speed;
-        w.current_push       = m_settings.world.current_push;
-        w.wade_slowdown      = m_settings.world.wade_slowdown;
-        w.fall_break_depth   = m_settings.world.fall_break_depth;
-        w.fluid_updates      = m_settings.world.fluid_updates;
-        const bool new_rules = w.fluid_rules != m_world.settings().fluid_rules;
+        w.fluid_resistance   = water.drag();
+        w.fluid_buoyancy     = water.buoyancy;
+        w.fluid_sink_speed   = water.sink_speed;
+        w.current_speed      = water.current_speed;
+        w.current_push       = water.current_push;
+        w.wade_slowdown      = water.wade_slowdown;
+        w.fall_break_depth   = water.fall_break_depth;
+        w.fluid_updates      = water.updates;
+        const bool new_rules = !m_flow_applied || !water.same_flow(m_applied_water);
+        if (new_rules) w.fluid_rules = water.rules();
+        m_applied_water      = water;
+        m_flow_applied       = true;
         m_world.set_physics(w);
         m_physics.set_settings(m_world.settings());
         if (new_rules) m_terrain.remesh_all();
@@ -570,6 +576,7 @@ private:
         m_simulation.radius = static_cast<double>(simulation_distance()) * Chunk::SIZE;
         m_simulation.world  = &m_world;
         TickContext ctx{ m_world, m_physics, m_entities, dt, &m_simulation };
+        gather_displacers();
         m_fluids.update(m_world, dt, m_simulation.center, m_simulation.radius);
         m_entities.tick(ctx);
         m_clock.advance(dt, m_settings.day_cycle);
@@ -582,6 +589,12 @@ private:
     static constexpr int LOOK_SETTLE_FRAMES = 2;
 
     static Color opaque(const Color& c) noexcept { return Color(c.red(), c.green(), c.blue()); }
+
+    void gather_displacers() {
+        m_displacers.clear();
+        if (m_world.fluid_rules().displaces()) m_entities.for_each([this](const Entity& e) { m_displacers.push_back(e.bounding_box()); });
+        m_world.displace(m_displacers);
+    }
 
     void gather_lights() {
         m_frame_lights.clear();
@@ -661,6 +674,10 @@ private:
     SettingsMenu                    m_menu;
     SettingsRegistry                m_settings_registry;
     LightingPresets                 m_presets = LightingPresets::builtin();
+    WaterPresets                    m_water_presets = WaterPresets::builtin();
+    WaterSettings                   m_applied_water;
+    bool                            m_flow_applied = false;
+    std::vector<AABB>               m_displacers;
     bool                            m_display_dirty = false;
     bool                            m_key_consumed = false;
     int                             m_ignore_look = 0;

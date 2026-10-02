@@ -123,7 +123,6 @@ public:
         ctx.physics.move(*this, ctx.world, m_velocity * ctx.dt);
         if (submerged > 0.0) m_fall_distance = vmin(m_fall_distance, fall_cap);
         m_was_submerged = submerged > 0.0;
-        ctx.physics.move(*this, ctx.world, m_velocity * ctx.dt);
         const double target_eye = m_body.get(m_pose).eye_height;
         m_eye_height += (target_eye - m_eye_height) * vmin(1.0, EYE_SMOOTHING * ctx.dt);
         if (std::fabs(target_eye - m_eye_height) < 1e-4) m_eye_height = target_eye;
