@@ -1,7 +1,7 @@
-#ifndef VOXELSPIRE_LIGHTING_PRESETS_HPP
-#define VOXELSPIRE_LIGHTING_PRESETS_HPP
+#ifndef VOXELSPIRE_PRESETS_HPP
+#define VOXELSPIRE_PRESETS_HPP
 
-#include "../core/preset_list.hpp"
+#include "preset_list.hpp"
 #include "settings.hpp"
 
 namespace voxelspire {
@@ -24,6 +24,23 @@ public:
     }
 };
 
+class WaterPresets : public PresetList<WaterSettings> {
+public:
+    static WaterPresets builtin() {
+        WaterPresets p;
+
+        for (const WaterSettings& s : {
+            WaterSettings::still(),
+            WaterSettings::minecraft(),
+            WaterSettings::flowing(),
+            WaterSettings::realistic(),
+            WaterSettings::ultra()
+        }) p.add(s);
+
+        return p;
+    }
+};
+
 } // namespace voxelspire
 
-#endif // VOXELSPIRE_LIGHTING_PRESETS_HPP
+#endif // VOXELSPIRE_PRESETS_HPP

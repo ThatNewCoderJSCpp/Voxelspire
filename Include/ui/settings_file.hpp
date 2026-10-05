@@ -3,8 +3,10 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <vector>
 #include "color_math.hpp"
@@ -23,11 +25,27 @@ public:
     static constexpr const char* KEY_SEPARATOR = " | ";
     static constexpr const char* UNBOUND       = "none";
     static constexpr int         CHANNELS      = 4;
+    static constexpr const char* TEMP_SUFFIX   = ".tmp";
+
+    using Values = std::unordered_map<std::string, std::string>;
 
     static bool save(const std::vector<SettingsTab>& tabs, const std::string& path) {
-        std::ofstream out(path, std::ios::trunc);
-        if (!out) return false;
+        const std::filesystem::path target(path);
+        const std::filesystem::path temp = target.string() + TEMP_SUFFIX;
+        std::error_code ec;
+        if (target.has_parent_path()) std::filesystem::create_directories(target.parent_path(), ec);
+        {
+            std::ofstream out(temp, std::ios::trunc);
+            if (!out) return false;
+            write(tabs, out);
+            if (!out) return false;
+        }
 
+        std::filesystem::rename(temp, target, ec);
+        return !ec;
+    }
+
+    static void write(const std::vector<SettingsTab>& tabs, std::ostream& out) {
         for (const SettingsTab& tab : tabs) {
             out << "[" << tab.name << "]\n";
 
@@ -38,16 +56,10 @@ public:
             
             out << "\n";
         }
-
-        return static_cast<bool>(out);
     }
 
-    static SettingsLoad load(std::vector<SettingsTab>& tabs, const std::string& path) {
-        SettingsLoad result;
-        std::ifstream in(path);
-        if (!in) return result;
-        result.found = true;
-        std::unordered_map<std::string, std::string> values;
+    static Values read(std::istream& in) {
+        Values values;
         std::string line;
 
         while (std::getline(in, line)) {
@@ -55,6 +67,22 @@ public:
             if (line.empty() || line[0] == '[' || line[0] == '#' || eq == std::string::npos) continue;
             values[trimmed(line.substr(0, eq))] = trimmed(line.substr(eq + 1));
         }
+
+        return values;
+    }
+
+    static SettingsLoad load(std::vector<SettingsTab>& tabs, const std::string& path) {
+        std::ifstream in(path);
+        if (!in) in.open(std::filesystem::path(path).filename());
+        if (!in) return {};
+        SettingsLoad result = apply(tabs, read(in));
+        result.found = true;
+        return result;
+    }
+
+    static SettingsLoad apply(std::vector<SettingsTab>& tabs, const Values& values) {
+        SettingsLoad result;
+        result.found = true;
 
         for (SettingsTab& tab : tabs)
             for (SettingControl& c : tab.controls) {
@@ -92,6 +120,7 @@ private:
                 return i >= 0 && static_cast<std::size_t>(i) < options.size() ? options[static_cast<std::size_t>(i)] : std::string();
             }
             case ControlKind::Color: return ColorMath::to_hex(c.get_color(), true);
+            case ControlKind::Text: return c.get_text();
             case ControlKind::Binding: {
                 if (!c.bindings) return UNBOUND;
                 std::string out;
@@ -129,6 +158,11 @@ private:
                 return false;
             }
             case ControlKind::Color: return assign_color(c, text, problem);
+            case ControlKind::Text: {
+                if (c.max_length > 0 && text.size() > c.max_length) { problem = "is longer than " + std::to_string(c.max_length) + " characters."; return false; }
+                c.set_text(text);
+                return true;
+            }
             case ControlKind::Binding: {
                 if (!c.bindings) return false;
                 InputBindings::Keys keys;

@@ -30,13 +30,13 @@ private:
 };
 
 namespace Attributes {
-    inline const Identifier MovementSpeed      { "voxelspire:movement_speed" };
-    inline const Identifier JumpVelocity       { "voxelspire:jump_velocity" };
-    inline const Identifier GroundAcceleration { "voxelspire:ground_acceleration" };
-    inline const Identifier AirAcceleration    { "voxelspire:air_acceleration" };
-    inline const Identifier GravityScale       { "voxelspire:gravity_scale" };
-    inline const Identifier DragScale          { "voxelspire:drag_scale" };
-    inline const Identifier BlockReach         { "voxelspire:block_reach" };
+    inline const Identifier MovementSpeed      = core_id(Kind::Attribute, "movement_speed");
+    inline const Identifier JumpVelocity       = core_id(Kind::Attribute, "jump_velocity");
+    inline const Identifier GroundAcceleration = core_id(Kind::Attribute, "ground_acceleration");
+    inline const Identifier AirAcceleration    = core_id(Kind::Attribute, "air_acceleration");
+    inline const Identifier GravityScale       = core_id(Kind::Attribute, "gravity_scale");
+    inline const Identifier DragScale          = core_id(Kind::Attribute, "drag_scale");
+    inline const Identifier BlockReach         = core_id(Kind::Attribute, "block_reach");
 } // namespace Attributes
 
 class AttributeRegistry {

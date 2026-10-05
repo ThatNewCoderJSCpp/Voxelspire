@@ -28,9 +28,10 @@ struct ParticleType {
 };
 
 namespace Particles {
-    inline const Identifier Smoke { "voxelspire:smoke" };
-    inline const Identifier Flame { "voxelspire:flame" };
-    inline const Identifier Spark { "voxelspire:spark" };
+    inline const Identifier Smoke  = core_id(Kind::Particle, "smoke");
+    inline const Identifier Flame  = core_id(Kind::Particle, "flame");
+    inline const Identifier Spark  = core_id(Kind::Particle, "spark");
+    inline const Identifier Splash = core_id(Kind::Particle, "splash");
 } // namespace Particles
 
 using ParticleTypeIndex = std::uint16_t;
@@ -103,6 +104,19 @@ public:
         spark.collision     = ParticleCollision::Kill;
         spark.emissive      = true;
         r.add(spark);
+
+        ParticleType splash;
+        splash.id            = Particles::Splash;
+        splash.lifetime_min  = 0.5;
+        splash.lifetime_max  = 1.1;
+        splash.gravity_scale = 1.0;
+        splash.drag          = 0.4;
+        splash.size_start    = 0.08f;
+        splash.size_end      = 0.05f;
+        splash.color_start   = Color(200, 225, 255, 200);
+        splash.color_end     = Color(220, 235, 255, 60);
+        splash.collision     = ParticleCollision::Kill;
+        r.add(splash);
     }
 
 private:

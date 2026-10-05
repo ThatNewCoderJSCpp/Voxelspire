@@ -3,11 +3,17 @@
 
 #include <algorithm>
 #include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include "world.hpp"
 
 namespace voxelspire {
+
+struct FluidSplash {
+    BlockPos pos;
+    double   strength = 0.0;
+};
 
 struct FluidStats {
     std::size_t pending  = 0;
@@ -17,8 +23,9 @@ struct FluidStats {
 
 class FluidSimulator {
 public:
-    static constexpr int    MAX_STEPS_PER_UPDATE = 4;
-    static constexpr double DORMANT_RECHECK      = 1.0;
+    static constexpr int         MAX_STEPS_PER_UPDATE = 4;
+    static constexpr double      DORMANT_RECHECK      = 1.0;
+    static constexpr std::size_t MAX_SPEEDS           = 65536;
 
     void update(World& world, double dt, const vector3d& center, double radius) {
         const FluidRules& rules = world.fluid_rules();
@@ -56,16 +63,26 @@ public:
         m_pending.clear();
         m_pending_set.clear();
         m_dormant.clear();
+        m_speeds.clear();
+        m_splashes.clear();
         m_time = 0.0;
         m_stats = {};
     }
 
     const FluidStats& stats() const noexcept { return m_stats; }
 
+    std::vector<FluidSplash> take_splashes() {
+        std::vector<FluidSplash> out;
+        out.swap(m_splashes);
+        if (m_speeds.size() > MAX_SPEEDS) m_speeds.clear();
+        return out;
+    }
+
 private:
     class Access final : public FluidAccess {
     public:
-        explicit Access(World& world) noexcept : m_world(world) {}
+        Access(World& world, std::unordered_map<BlockPos, float, BlockPosHash>& speeds, std::vector<FluidSplash>& splashes) noexcept
+            : m_world(world), m_speeds(speeds), m_splashes(splashes) {}
 
         void bind(BlockId fluid) noexcept { m_fluid = fluid; }
 
@@ -77,7 +94,19 @@ private:
 
         std::uint8_t state(const BlockPos& p) const override { return m_world.fluid_state(p); }
         void put(const BlockPos& p, std::uint8_t state) override { m_world.set_block(p, m_fluid, state); }
-        void clear(const BlockPos& p) override { m_world.set_block(p, AIR_ID); }
+        void clear(const BlockPos& p) override { m_world.set_block(p, AIR_ID); m_speeds.erase(p); }
+
+        double speed(const BlockPos& p) const override {
+            auto it = m_speeds.find(p);
+            return it == m_speeds.end() ? 0.0 : it->second;
+        }
+
+        void set_speed(const BlockPos& p, double v) override {
+            if (v <= 0.0) m_speeds.erase(p);
+            else m_speeds[p] = static_cast<float>(v);
+        }
+
+        void splash(const BlockPos& p, double strength) override { m_splashes.push_back({ p, strength }); }
         FluidOccupancy occupancy(const BlockPos& p) const override { return m_world.occupancy(p); }
 
         FluidCell look(const BlockPos& p) const override {
@@ -87,8 +116,10 @@ private:
         }
 
     private:
-        World&  m_world;
-        BlockId m_fluid = AIR_ID;
+        World&                                             m_world;
+        std::unordered_map<BlockPos, float, BlockPosHash>& m_speeds;
+        std::vector<FluidSplash>&                          m_splashes;
+        BlockId                                            m_fluid = AIR_ID;
     };
 
     static bool before(const BlockPos& a, const BlockPos& b) noexcept {
@@ -118,7 +149,7 @@ private:
         std::sort(m_current.begin(), m_current.end(), before);
         const BlockTraits* traits = world.blocks().traits_table();
         const std::size_t budget = static_cast<std::size_t>(vmax(world.settings().fluid_updates, 1));
-        Access access(world);
+        Access access(world, m_speeds, m_splashes);
         std::size_t updated = 0;
 
         for (const BlockPos& p : m_current) {
@@ -143,13 +174,15 @@ private:
         m_stats.updated = updated;
     }
 
-    std::vector<BlockPos>                      m_pending;
-    std::unordered_set<BlockPos, BlockPosHash> m_pending_set;
-    std::vector<BlockPos>                      m_current;
-    std::vector<BlockPos>                      m_dormant;
-    double                                     m_time    = 0.0;
-    double                                     m_recheck = 0.0;
-    FluidStats                                 m_stats;
+    std::vector<BlockPos>                             m_pending;
+    std::unordered_set<BlockPos, BlockPosHash>        m_pending_set;
+    std::vector<BlockPos>                             m_current;
+    std::vector<BlockPos>                             m_dormant;
+    double                                            m_time    = 0.0;
+    double                                            m_recheck = 0.0;
+    FluidStats                                        m_stats;
+    std::unordered_map<BlockPos, float, BlockPosHash> m_speeds;
+    std::vector<FluidSplash>                          m_splashes;
 };
 
 } // namespace voxelspire

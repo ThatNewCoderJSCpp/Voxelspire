@@ -5,7 +5,8 @@ namespace voxelspire {
 
 struct PlayerDefaults {
     static constexpr double width = 0.64;
-    static constexpr double reach = 5.0;
+    static constexpr double reach = 5.00;
+    static constexpr double mass  = 70.0;
 
     struct decreases {
         static constexpr double crouching_height          = 0.15;

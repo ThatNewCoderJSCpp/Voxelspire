@@ -42,6 +42,7 @@ public:
         if (m_rigs.empty()) return;
         const vector3d before = m_camera.position();
         m_rigs[m_active]->apply(m_camera, CameraRigContext{ player, world, m_settings, alpha });
+        keep_off_surface(world);
         const vector3d now = m_camera.position();
         if (m_has_previous && frame_dt > 0.0) m_velocity = (now - before) / frame_dt;
         m_has_previous = true;
@@ -53,6 +54,25 @@ public:
     const vector3d& velocity()                const noexcept { return m_velocity; }
 
 private:
+    static constexpr double SURFACE_CLEARANCE = 2.5;
+
+    void keep_off_surface(const World& world) {
+        vector3d p = m_camera.position();
+        const double margin = m_settings.near_plane * SURFACE_CLEARANCE;
+        const BlockPos cell = BlockPos::containing(p);
+
+        for (int dz = -1; dz <= 1; ++dz) {
+            const BlockPos c{ cell.x, cell.y, cell.z + dz };
+            const BlockId id = world.block_id_at(c);
+            if (!world.blocks().traits(id).fluid || world.block_id_at({ c.x, c.y, c.z + 1 }) == id) continue;
+            const double surface = c.z + world.fluid_height(c);
+            if (std::fabs(p.z - surface) >= margin) continue;
+            p.z = p.z >= surface ? surface + margin : surface - margin;
+            m_camera.set_position(p);
+            return;
+        }
+    }
+
     CameraSettings                          m_settings;
     fizmo::graphics::Camera3D               m_camera;
     std::vector<std::unique_ptr<CameraRig>> m_rigs;

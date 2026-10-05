@@ -8,7 +8,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <vector>
-#include "../lighting/settings.hpp"
+#include "../core/settings.hpp"
 #include "../world/world.hpp"
 
 namespace voxelspire {

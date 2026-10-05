@@ -4,9 +4,10 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <utility>
-#include "../core/types.hpp"
+#include "block_ids.hpp"
 
 namespace voxelspire {
 
@@ -146,20 +147,24 @@ struct BlockTraits {
 
     static bool face_visible(BlockId self, const BlockTraits& a, BlockId other, const BlockTraits& b) noexcept {
         if (!a.visible || b.opaque) return false;
+        if (a.fluid && b.solid && !b.opaque && b.full_cube) return false;
         return !(self == other && a.cull_same);
     }
 };
 
 class Block {
 public:
-    Block(std::string name, BlockProperties props) : m_name(std::move(name)), m_props(props) {}
+    Block(Identifier identifier, BlockProperties props) : m_identifier(identifier), m_props(props) {
+        if (m_identifier.kind() != Kind::Block) throw std::invalid_argument("block identifiers must be of kind block: " + m_identifier.str());
+    }
     virtual ~Block() = default;
 
     Block(const Block&) = delete;
     Block& operator=(const Block&) = delete;
 
-    BlockId                id()         const noexcept { return m_id; }
-    const std::string&     name()       const noexcept { return m_name; }
+    BlockId                handle()     const noexcept { return m_handle; }
+    Identifier             identifier() const noexcept { return m_identifier; }
+    const std::string&     name()       const { return m_identifier.name(); }
     const BlockProperties& properties() const noexcept { return m_props; }
 
     bool is_solid()   const noexcept { return m_props.solid; }
@@ -204,14 +209,14 @@ protected:
 
 private:
     friend class BlockRegistry;
-    BlockId         m_id = AIR_ID;
-    std::string     m_name;
+    BlockId         m_handle = AIR_ID;
+    Identifier      m_identifier;
     BlockProperties m_props;
 };
 
 class AirBlock final : public Block {
 public:
-    AirBlock() : Block("air", air_properties()) {}
+    AirBlock() : Block(BlockIds::AIR, air_properties()) {}
     FaceAppearance face_appearance(Face) const override { return { Color(0, 0, 0, 0), 0 }; }
 
 private:

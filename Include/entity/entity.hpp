@@ -78,6 +78,11 @@ public:
     vector3d interpolated_position(double alpha) const noexcept { return lerp(m_prev_position, m_position, alpha); }
 
 public:
+    static constexpr double DEFAULT_DENSITY = 985.0;
+
+    virtual double mass() const noexcept { return m_mass > 0.0 ? m_mass : m_width * m_width * m_height * DEFAULT_DENSITY; }
+    void set_mass(double kilograms) noexcept { m_mass = vmax(kilograms, 0.0); }
+
     double width()  const noexcept { return m_width; }
     double height() const noexcept { return m_height; }
 
@@ -123,6 +128,7 @@ protected:
     bool     m_on_ground   = false;
     double   m_yaw         = 0.0;
     double   m_pitch       = 0.0;
+    double   m_mass        = 0.0;
 
 private:
     friend class EntityManager;

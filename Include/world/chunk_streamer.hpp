@@ -1,12 +1,14 @@
 #ifndef VOXELSPIRE_WORLD_CHUNK_STREAMER_HPP
 #define VOXELSPIRE_WORLD_CHUNK_STREAMER_HPP
 
+#include <algorithm>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 #include "../core/job_system.hpp"
+#include "world_save.hpp"
 #include "world_generator.hpp"
 
 namespace voxelspire {
@@ -43,18 +45,49 @@ public:
         }
     }
 
+    void set_archive(const ChunkArchive* archive) noexcept { m_archive = archive; }
+
     void load_now(const std::vector<ColumnPos>& columns) {
         for (const ColumnPos& c : columns) {
             if (m_world.column_loaded(c)) continue;
-            insert(c, m_generator.generate_column(c, m_world.min_chunk_z(), m_world.max_chunk_z()));
+            insert(c, restore(m_archive, c, m_generator.generate_column(c, m_world.min_chunk_z(), m_world.max_chunk_z())));
         }
     }
 
     void note_changes(const std::vector<ChunkPos>& changed) {
         for (const ChunkPos& p : changed) {
             const Chunk* c = m_world.chunk_at(p);
-            if (c && c->modified()) m_modified.insert(p);
+            if (!c || !c->modified()) continue;
+            m_modified.insert(p);
+            m_dirty.insert({ p.x, p.y });
         }
+    }
+
+    bool save(const ChunkArchive& archive) {
+        std::unordered_map<ColumnPos, std::vector<const Chunk*>, ColumnPosHash> columns;
+        for (const ColumnPos& c : m_dirty) columns[c];
+
+        for (const ChunkPos& p : m_modified) {
+            const ColumnPos c{ p.x, p.y };
+            if (!m_dirty.count(c)) continue;
+            if (const Chunk* chunk = m_world.chunk_at(p)) columns[c].push_back(chunk);
+        }
+
+        for (const auto& kv : m_store) {
+            const ColumnPos c{ kv.first.x, kv.first.y };
+            if (m_dirty.count(c)) columns[c].push_back(kv.second.get());
+        }
+
+        m_dirty.clear();
+        bool ok = true;
+
+        for (const auto& kv : columns) {
+            if (archive.save_column(kv.first, kv.second)) continue;
+            m_dirty.insert(kv.first);
+            ok = false;
+        }
+
+        return ok;
     }
 
     ChunkOverrides collect_overrides(int x0, int y0, int x1, int y1) const {
@@ -93,8 +126,10 @@ private:
         const int zmin = m_world.min_chunk_z(), zmax = m_world.max_chunk_z();
         JobSystem* jobs = &m_jobs;
 
-        m_jobs.submit([this, gen, jobs, c, zmin, zmax] {
-            auto chunks = std::make_shared<std::vector<std::unique_ptr<Chunk>>>(gen->generate_column(c, zmin, zmax));
+        const ChunkArchive* archive = m_archive;
+
+        m_jobs.submit([this, gen, jobs, archive, c, zmin, zmax] {
+            auto chunks = std::make_shared<std::vector<std::unique_ptr<Chunk>>>(restore(archive, c, gen->generate_column(c, zmin, zmax)));
             jobs->post([this, c, chunks] { on_generated(c, std::move(*chunks)); });
         });
     }
@@ -105,11 +140,27 @@ private:
         insert(c, std::move(chunks));
     }
 
+    static std::vector<std::unique_ptr<Chunk>> restore(const ChunkArchive* archive, const ColumnPos& c, std::vector<std::unique_ptr<Chunk>> generated) {
+        if (!archive) return generated;
+        std::vector<std::unique_ptr<Chunk>> saved = archive->load_column(c);
+        if (saved.empty()) return generated;
+
+        for (auto& chunk : generated) {
+            if (!chunk) continue;
+            const int z = chunk->pos().z;
+            const bool replaced = std::any_of(saved.begin(), saved.end(), [z](const std::unique_ptr<Chunk>& s) { return s->pos().z == z; });
+            if (!replaced) saved.push_back(std::move(chunk));
+        }
+
+        return saved;
+    }
+
     void insert(const ColumnPos& c, std::vector<std::unique_ptr<Chunk>> chunks) {
         std::vector<std::unique_ptr<Chunk>> final_chunks;
 
         for (auto& chunk : chunks) {
             if (!chunk || m_store.count(chunk->pos())) continue;
+            if (chunk->modified()) m_modified.insert(chunk->pos());
             final_chunks.push_back(std::move(chunk));
         }
 
@@ -154,6 +205,8 @@ private:
     std::unordered_set<ColumnPos, ColumnPosHash> m_in_flight;
     std::unordered_map<ChunkPos, std::unique_ptr<Chunk>, ChunkPosHash> m_store;
     std::unordered_set<ChunkPos, ChunkPosHash> m_modified;
+    std::unordered_set<ColumnPos, ColumnPosHash> m_dirty;
+    const ChunkArchive*     m_archive = nullptr;
     vector3d                m_center{};
     double                  m_keep_distance = 0.0;
 };

@@ -2,6 +2,9 @@
 #define VOXELSPIRE_GAME_HPP
 
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -14,9 +17,8 @@
 #include "../entity/player.hpp"
 #include "../input/input_bindings.hpp"
 #include "../lighting/director.hpp"
-#include "../lighting/presets.hpp"
+#include "../core/presets.hpp"
 #include "../lighting/world_light.hpp"
-#include "../physics/water_presets.hpp"
 #include "../particles/system.hpp"
 #include "../render/block_outline_renderer.hpp"
 #include "../render/capsule_renderer.hpp"
@@ -24,19 +26,31 @@
 #include "../render/reflection_planes.hpp"
 #include "../render/world_renderer.hpp"
 #include "../sky/renderer.hpp"
+#include "../ui/pause_menu.hpp"
 #include "../ui/settings_file.hpp"
 #include "../ui/settings_menu.hpp"
 #include "../ui/settings_pages.hpp"
 #include "../ui/settings_registry.hpp"
 #include "../world/chunk_streamer.hpp"
-#include "../world/world_generator.hpp"
+#include "../world/terrain_generator.hpp"
 #include "../world/fluid_simulator.hpp"
+#include "../world/water_weather.hpp"
+#include "../world/world_save.hpp"
+#include "../weather/precipitation.hpp"
+#include "../weather/sky_weather.hpp"
 
 namespace voxelspire {
 
+struct WorldSlot {
+    std::filesystem::path                   folder;
+    std::string                             name;
+    WorldState                              state;
+    std::function<bool(const WorldState&)>  write_state;
+};
+
 class Game {
 public:
-    explicit Game(const GameSettings& settings = GameSettings{})
+    explicit Game(const GameSettings& settings = GameSettings{}, const WorldGeneratorFactory& generator = {}, WorldSlot slot = {})
         : m_settings(with_seed(settings)),
           m_default_settings(m_settings),
           m_block_ids(DefaultBlocks::register_all(m_registry, settings.render.block_color_variation)),
@@ -44,7 +58,7 @@ public:
           m_movement_modes(make_movement_modes(settings.character)),
           m_particle_types(make_particle_types()),
           m_world(m_registry, m_settings.world),
-          m_generator(std::make_unique<FlatWorldGenerator>(m_settings.flat_world, m_registry, m_settings.world.seed)),
+          m_generator((generator ? generator : terrain_world(m_settings.terrain))(m_registry, m_settings.world)),
           m_jobs(settings.streaming.worker_threads),
           m_streamer(m_world, *m_generator, m_jobs),
           m_terrain(m_world, *m_generator, m_jobs, m_streamer),
@@ -57,15 +71,24 @@ public:
           m_sun_path(std::make_unique<DefaultSunPath>(m_settings.day_cycle, m_settings.celestial)),
           m_capsule(make_capsule(settings.render)) {
         m_world.attach_lighting(make_light_engine(m_world, m_settings.world.light_format));
+        m_world.set_wave_sampler([this](double x, double y) { return m_waves.at(x, y, wave_scale_at(x, y)); });
         m_lighting.configure(m_settings.lighting);
         m_celestial.configure(m_settings.celestial);
         m_terrain.configure(m_settings.render, m_settings.streaming, m_settings.lod, m_settings.lighting);
+        m_terrain.set_wave_detail(m_settings.render.wave_detail);
         m_camera.add_rig(std::make_unique<FirstPersonRig>());
         m_camera.add_rig(std::make_unique<ThirdPersonBackRig>());
         m_camera.add_rig(std::make_unique<ThirdPersonFrontRig>());
         apply_character();
         apply_physics();
-        SettingsPages::register_all(m_settings_registry, make_hooks(), m_presets, m_water_presets);
+        SettingsPages::register_personal(m_settings_registry, make_hooks(), m_presets);
+        m_slot = std::move(slot);
+        m_pause.set_subtitle(m_slot.name);
+
+        if (!m_slot.folder.empty()) {
+            m_archive = std::make_unique<ChunkArchive>(m_slot.folder, m_registry);
+            m_streamer.set_archive(m_archive.get());
+        }
     }
 
     ~Game() { m_jobs.shutdown(); }
@@ -76,10 +99,19 @@ public:
     void start(fizmo::windows::Window& window, unsigned int viewport_w, unsigned int viewport_h) {
         m_registry.lock();
         m_cursor = std::make_unique<fizmo::windows::CursorLock>(window);
-        const ColumnPos spawn = m_generator->spawn_column();
+        const ColumnPos spawn = m_slot.state.has_player ? World::column_of(m_slot.state.position) : m_generator->spawn_column();
         m_streamer.load_now(columns_around(spawn, simulation_distance()));
         m_world.update_lighting(std::numeric_limits<double>::max());
-        respawn_player();
+        if (m_slot.state.has_time) m_clock.set(m_slot.state.day, m_slot.state.time);
+        restore_weather(m_slot.state);
+
+        if (m_slot.state.has_player) {
+            m_player->respawn(m_slot.state.position);
+            m_player->set_look(m_slot.state.yaw, m_slot.state.pitch);
+        } else {
+            respawn_player();
+        }
+
         update_streaming(true);
         m_camera.set_viewport(viewport_w, viewport_h);
         m_viewport_w = viewport_w;
@@ -90,18 +122,41 @@ public:
 
     void shutdown() noexcept { if (m_cursor) m_cursor->unlock(); }
 
+    bool save_world() {
+        if (!m_archive) return false;
+        const bool chunks = m_streamer.save(*m_archive);
+        WorldState state;
+        state.has_player = true;
+        state.position   = m_player->position();
+        state.yaw        = m_player->yaw();
+        state.pitch      = m_player->pitch();
+        state.has_time   = true;
+        state.time       = m_clock.time();
+        state.day        = m_clock.day();
+        store_weather(state);
+        m_autosave_timer = 0.0;
+        m_slot.state     = state;
+        const bool wrote = !m_slot.write_state || m_slot.write_state(state);
+        return chunks && wrote;
+    }
+
+    void request_quit_to_title() noexcept { m_quit_requested = true; }
+    bool take_quit_request() noexcept { const bool q = m_quit_requested; m_quit_requested = false; return q; }
+    const std::filesystem::path& save_folder() const noexcept { return m_slot.folder; }
+
     bool mouse_locked() const noexcept { return m_cursor && m_cursor->locked(); }
 
     void handle_event(const fizmo::windows::WindowEvent& e) {
         using fizmo::windows::WindowEventType;
-        if (m_menu.on_event(e)) { if (e.type == WindowEventType::KeyPress) m_key_consumed = true; return; }
+        if (m_menu.is_open() && m_menu.on_event(e)) { if (e.type == WindowEventType::KeyPress) m_key_consumed = true; return; }
+        if (!m_menu.is_open() && m_pause.on_event(e)) { if (e.type == WindowEventType::KeyPress) m_key_consumed = true; return; }
 
         switch (e.type) {
             case WindowEventType::WindowResize:
                 if (e.x > 0 && e.y > 0) { m_viewport_w = e.x; m_viewport_h = e.y; m_camera.set_viewport(e.x, e.y); }
                 break;
             case WindowEventType::MouseClick:
-                if (m_cursor && !m_cursor->locked() && !m_menu.is_open()) lock_cursor();
+                if (m_cursor && !m_cursor->locked() && !paused()) lock_cursor();
                 break;
             case WindowEventType::KeyPress:
                 m_last_key = e.key_name;
@@ -111,8 +166,11 @@ public:
     }
 
     void update(double frame_dt, const fizmo::windows::InputManager& input) {
+        const auto update_start = Clock::now();
+        m_cpu_frame = CpuTimings{};
         m_frame_dt = frame_dt;
         m_seconds += frame_dt;
+        autosave(frame_dt);
         const InputBindings& keys = m_settings.bindings;
         if (keys.just_pressed(input, Action::OpenMenu) && !m_key_consumed) toggle_menu();
         m_key_consumed = false;
@@ -120,10 +178,13 @@ public:
         if (m_menu.is_open()) {
             m_menu.update(input, frame_dt);
             apply_settings(m_menu.take_changes());
-            if (m_menu.take_close_request()) close_menu();
+            if (m_menu.take_close_request()) close_options();
+        } else if (m_pause.is_open()) {
+            m_pause.update(input, frame_dt);
+            act(m_pause.take_action());
         }
 
-        const bool playing = !m_menu.is_open();
+        const bool playing = !paused();
         if (playing) handle_game_keys(input);
         MovementIntent intent;
 
@@ -140,22 +201,43 @@ public:
         }
 
         m_player->set_intent(intent);
+        const auto ticks_start = Clock::now();
         if (playing || !m_settings.menu.pause_game) advance(frame_dt * vmax(m_settings.simulation.game_speed, 0.0));
+        const auto streaming_start = Clock::now();
+        m_cpu_frame.ticks = ms_between(ticks_start, streaming_start);
         ensure_player_terrain();
         update_streaming(false);
         m_streamer.update(m_settings.streaming.max_column_jobs);
         m_jobs.run_completions(m_settings.streaming.result_time_budget_ms);
+        const auto light_start = Clock::now();
         m_world.update_lighting(m_settings.lighting.update_budget_ms);
+        const auto terrain_start = Clock::now();
+        m_cpu_frame.lighting = ms_between(light_start, terrain_start);
         m_terrain.update(m_player->eye_position(m_alpha));
+        m_cpu_frame.streaming = ms_between(streaming_start, light_start) + ms_between(terrain_start, Clock::now());
         m_particles.update(frame_dt, m_camera.camera().position(), m_world, m_world.settings().gravity);
+        update_weather(frame_dt, playing || !m_settings.menu.pause_game);
         m_target = raycast_blocks(m_world, m_player->eye_position(m_alpha), m_player->look_direction(), m_player->attributes().value(Attributes::BlockReach));
         m_camera.update(*m_player, m_world, m_alpha, frame_dt);
+        m_cpu_frame.update = ms_between(update_start, Clock::now());
+        m_cpu.blend_update(m_cpu_frame);
     }
 
     void render(fizmo::windows::Renderer& renderer, double fps_average) {
+        const auto render_start = Clock::now();
+        render_frame(renderer, fps_average);
+        CpuTimings::blend(m_cpu.render, ms_between(render_start, Clock::now()));
+    }
+
+    void render_frame(fizmo::windows::Renderer& renderer, double fps_average) {
         m_terrain.upload(renderer);
         const vector3d eye = m_camera.camera().position();
+        fizmo::graphics::Swell3D swell = m_waves.swell(eye);
+        swell.detail = static_cast<float>(m_waves_on ? m_settings.render.wave_detail * Chunk::SIZE : 0);
+        m_lighting.set_swell(swell);
+        m_sun_path->set_declination(declination());
         m_sky = m_sun_path->evaluate(m_clock.time());
+        SkyWeather::apply(m_sky, m_local_weather, m_settings.weather, m_settings.weather_view);
         gather_lights();
         const BlockPos eye_cell = BlockPos::containing(eye);
         const double eye_water = m_world.fluid_height(eye_cell);
@@ -166,7 +248,8 @@ public:
         gather_occluders(show_body);
         m_reflections.update(m_world, m_camera.camera(), m_settings.lighting, m_settings.render.render_distance_blocks());
         m_lighting.set_reflection_planes(m_reflections.planes());
-        renderer.set_scene_lighting(m_lighting.build(m_sky, m_world, eye, m_frame_lights, m_seconds, submerged ? &medium : nullptr));
+        const fizmo::graphics::SceneLighting3D& scene = m_lighting.build(m_sky, m_world, eye, m_frame_lights, m_seconds, submerged ? &medium : nullptr);
+        renderer.set_scene_lighting(scene);
         renderer.begin_3d(m_camera.camera());
         renderer.set_light_3d(fizmo::graphics::Light3D::sun(LEGACY_SUN));
         m_celestial.render(renderer, celestial_view(eye, submerged));
@@ -175,21 +258,29 @@ public:
         options.cave_culling    = m_settings.render.cave_culling;
         options.face_culling    = m_settings.render.face_culling;
         options.shadow_distance = m_lighting.shadows() ? m_lighting.shadow_distance() : 0.0;
+        options.sun_casters     = scene.sun_shadow.enabled && scene.sun_intensity > 0.0f;
+        for (const auto& l : scene.point_lights) if (l.casts_shadows) options.point_casters.push_back({ l.position, l.radius });
         options.reflections     = m_reflections.planes();
         options.reflection_distance = vmin(static_cast<double>(m_settings.lighting.reflection_view_chunks) * Chunk::SIZE + m_reflections.farthest(), options.render_distance);
         m_stats = m_world_renderer.render(renderer, m_terrain, m_camera.camera(), options);
         m_particles.render(renderer, eye, [this](const BlockPos& b) { return m_lighting.render_light_at(m_world, b.center()); });
+        if (!submerged) m_precipitation.render(renderer, precipitation_brightness(eye));
 
         if (show_body) {
             const auto view = third_person ? fizmo::graphics::View3D::Everywhere : fizmo::graphics::View3D::ReflectionsOnly;
             m_capsule.render(renderer, *m_player, m_alpha, m_lighting.render_light_at(m_world, m_player->interpolated_position(m_alpha) + vector3d{ 0.0, 0.0, m_player->height() * 0.5 }), view, !m_lighting.capsule_shadows());
         }
 
-        if (m_target && !m_menu.is_open()) m_outline.render(renderer, m_world, *m_target, m_settings.render);
+        if (m_target && !paused()) m_outline.render(renderer, m_world, *m_target, m_settings.render);
         renderer.end_3d();
 
         if (m_menu.is_open()) {
             m_menu.render(renderer, m_viewport_w, m_viewport_h, m_settings.menu);
+            return;
+        }
+
+        if (m_pause.is_open()) {
+            m_pause.render(renderer, m_viewport_w, m_viewport_h, m_settings.menu);
             return;
         }
 
@@ -224,16 +315,36 @@ public:
     }
 
     void open_menu() {
-        if (m_menu.is_open()) return;
-        m_menu.open();
+        if (paused()) return;
+        m_pause.open();
         if (m_cursor) m_cursor->unlock();
     }
 
     void close_menu() {
+        if (!paused()) return;
+        if (m_menu.is_open()) close_options();
+        m_pause.close();
+        lock_cursor();
+    }
+
+    void open_options() {
+        if (!m_pause.is_open()) open_menu();
+        m_menu.open();
+    }
+
+    void close_options() {
         if (!m_menu.is_open()) return;
         m_menu.close();
         if (m_settings.menu.save_on_close) save_settings();
-        lock_cursor();
+    }
+
+    void save_and_exit() {
+        if (m_archive && !save_world()) {
+            m_pause.set_status("The world could not be saved. Check that its folder can be written to.", true);
+            return;
+        }
+
+        request_quit_to_title();
     }
 
     void lock_cursor() {
@@ -242,9 +353,16 @@ public:
         m_ignore_look = LOOK_SETTLE_FRAMES;
     }
 
-    void toggle_menu() { if (m_menu.is_open()) close_menu(); else open_menu(); }
-    bool menu_open() const noexcept { return m_menu.is_open(); }
-    SettingsMenu& menu() noexcept { return m_menu; }
+    void toggle_menu() {
+        if (m_menu.is_open()) close_options();
+        else if (m_pause.is_open()) close_menu();
+        else open_menu();
+    }
+
+    bool          paused()     const noexcept { return m_pause.is_open() || m_menu.is_open(); }
+    bool          menu_open()  const noexcept { return m_menu.is_open(); }
+    SettingsMenu& menu()       noexcept { return m_menu; }
+    PauseMenu&    pause_menu() noexcept { return m_pause; }
 
     bool save_settings() { return SettingsFile::save(m_menu.tabs(), m_settings.menu.file); }
 
@@ -276,6 +394,7 @@ public:
         if (groups & Apply::LightFormat) apply_light_format();
         if (groups & Apply::Lighting)    set_lighting(m_settings.lighting);
         if (groups & (Apply::Terrain | Apply::Streaming)) m_terrain.configure(m_settings.render, m_settings.streaming, m_settings.lod, m_settings.lighting);
+        if (groups & Apply::Terrain)     m_terrain.set_wave_detail(m_settings.render.wave_detail);
         if (groups & Apply::Streaming)   set_render_distance(m_settings.render.render_distance);
         if (groups & Apply::Particles)   m_particles.settings() = m_settings.particles;
         if (groups & Apply::Entities)    m_entities.settings() = m_settings.entities;
@@ -296,13 +415,13 @@ public:
         info.camera_mode    = m_camera.mode_name();
         info.stats          = m_stats;
         info.target         = m_target;
-        info.target_name    = m_target ? m_world.block_at(m_target->block).name() : std::string();
+        info.target_name    = m_target ? m_world.block_at(m_target->block).identifier().str() : std::string();
         info.mouse_captured = mouse_locked();
         info.last_key       = m_last_key;
         info.movement_mode  = m_player->movement_mode() ? m_player->movement_mode()->id().str() : std::string("none");
         info.entity_count    = m_entities.size();
         info.entity_contacts = m_entities.last_contact_count();
-        info.air_model         = m_world.settings().air_resistance->id();
+        info.air_model         = m_world.settings().air_resistance->id().name();
         info.terminal_velocity = m_physics.terminal_velocity(*m_player, m_player->effective_gravity_scale(), m_player->effective_drag_scale());
         info.streaming         = m_streamer.stats();
         info.simulation_distance = m_settings.streaming.simulation_distance;
@@ -312,20 +431,27 @@ public:
         info.worker_threads      = m_jobs.worker_count();
         info.particles           = m_particles.count();
         info.particle_emitters   = m_particles.emitter_count();
-        info.seed                = m_settings.world.seed;
+        const BlockPos feet      = BlockPos::containing(m_player->position());
+        const Biome* biome       = m_generator->biome_at(feet.x, feet.y);
+        info.biome               = biome ? biome->name() : std::string();
         info.light               = m_world.lighting() ? m_world.lighting()->stats() : LightStats{};
         info.lighting_preset     = m_settings.lighting.name;
-        info.time_hours          = m_clock.hours(m_settings.day_cycle);
-        info.minutes_per_hour    = m_settings.day_cycle.minutes_per_hour;
-        info.seconds_per_minute  = m_settings.day_cycle.seconds_per_minute;
+        info.time_hours          = m_clock.hours();
         info.day                 = m_clock.day();
+        info.date                = m_date.describe();
+        info.weather             = weather_text();
+        info.water_weather       = water_weather_text();
+        info.temperature         = m_local_weather.temperature;
+        info.temperature_unit    = m_settings.weather_view.unit;
         info.day_cycle           = m_settings.day_cycle.enabled;
         info.light_here          = light_level_at(m_player->eye_position(m_alpha));
         info.dynamic_lights      = m_lighting.scene().point_lights.size();
         info.shadow_casters      = m_stats.shadow_casters;
+        info.shadow_buried       = m_stats.shadow_buried;
+        info.cpu                 = m_cpu;
         info.water_preset        = m_settings.water.name;
-        info.fluid_model         = m_world.settings().fluid_resistance->id();
-        info.flow_model          = m_world.fluid_rules().id();
+        info.fluid_model         = m_world.settings().fluid_resistance->id().name();
+        info.flow_model          = m_world.fluid_rules().id().name();
         info.fluids              = m_fluids.stats();
         info.reflection_planes   = m_reflections.planes().size();
         info.gpu                 = average_gpu();
@@ -350,6 +476,10 @@ public:
         const DynamicLight torch = m_settings.hand_light;
         m_player->set_hand_light(m_player->has_hand_light() ? nullptr : &torch);
     }
+
+    WeatherSystem&      weather()       noexcept       { return m_weather; }
+    const LocalWeather& local_weather() const noexcept { return m_local_weather; }
+    const CalendarDate& date()          const noexcept { return m_date; }
 
     void set_sun_path(std::unique_ptr<SunPath> path) { if (path) m_sun_path = std::move(path); }
     CelestialRenderer& celestial()       noexcept { return m_celestial; }
@@ -433,7 +563,7 @@ private:
             m_player->add_look(-input.mouse_delta_x() * sens, -input.mouse_delta_y() * sens * invert);
         }
 
-        const double hour = 1.0 / vmax(m_settings.day_cycle.hours_per_day, 1.0);
+        const double hour = 1.0 / DayCycleSettings::HOURS_PER_DAY;
         if (keys.just_pressed(input, Action::CycleCamera))        m_camera.cycle_rig();
         if (keys.just_pressed(input, Action::ToggleHud))          m_settings.hud.show_debug = !m_settings.hud.show_debug;
         if (keys.just_pressed(input, Action::CycleHudCorner))     m_settings.hud.corner = Hud::next_corner(m_settings.hud.corner);
@@ -447,15 +577,26 @@ private:
         if (keys.just_pressed(input, Action::TimeForward))        m_clock.add(hour);
         if (keys.just_pressed(input, Action::TimeBackward))       m_clock.add(-hour);
         if (keys.just_pressed(input, Action::ToggleDayCycle))     m_settings.day_cycle.enabled = !m_settings.day_cycle.enabled;
+        if (keys.just_pressed(input, Action::CycleWeather))       m_weather.cycle(m_settings.weather, m_weather_rng);
+    }
+
+    void act(PauseAction action) {
+        switch (action) {
+            case PauseAction::None:        break;
+            case PauseAction::Resume:      close_menu(); break;
+            case PauseAction::Options:     open_options(); break;
+            case PauseAction::SaveAndExit: save_and_exit(); break;
+        }
     }
 
     SettingsHooks make_hooks() {
         SettingsHooks hooks;
-        hooks.hour     = [this] { return m_clock.hours(m_settings.day_cycle.hours_per_day); };
-        hooks.set_hour = [this](double h) { m_clock.set_time(h / vmax(m_settings.day_cycle.hours_per_day, 1.0)); };
-        hooks.save     = [this] { save_settings(); };
-        hooks.reload   = [this] { load_settings(); };
-        hooks.respawn  = [this] { respawn_player(); };
+        hooks.hour       = [this] { return m_clock.hours(); };
+        hooks.set_hour   = [this](double h) { m_clock.set_time(h / DayCycleSettings::HOURS_PER_DAY); };
+        hooks.save       = [this] { save_settings(); };
+        hooks.reload     = [this] { load_settings(); };
+        hooks.respawn    = [this] { respawn_player(); };
+        hooks.save_world = [this] { save_world(); };
         return hooks;
     }
 
@@ -477,7 +618,7 @@ private:
         WorldSettings w      = m_world.settings();
         w.gravity            = m_settings.world.gravity;
         w.air_resistance     = m_settings.physics.air_resistance(w.gravity, m_settings.world.air_resistance);
-        w.fluid_resistance   = water.drag();
+        w.fluid_resistance   = water.drag(m_settings.character.mass);
         w.fluid_buoyancy     = water.buoyancy;
         w.fluid_sink_speed   = water.sink_speed;
         w.current_speed      = water.current_speed;
@@ -485,8 +626,11 @@ private:
         w.wade_slowdown      = water.wade_slowdown;
         w.fall_break_depth   = water.fall_break_depth;
         w.fluid_updates      = water.updates;
-        const bool new_rules = !m_flow_applied || !water.same_flow(m_applied_water);
-        if (new_rules) w.fluid_rules = water.rules();
+        m_player->set_mass(m_settings.character.mass);
+        apply_waves();
+        const bool new_rules = !m_flow_applied || !water.same_flow(m_applied_water) || m_applied_sea != m_settings.terrain.sea_level;
+        if (new_rules) w.fluid_rules = water.rules(m_settings.terrain.sea_level);
+        m_applied_sea        = m_settings.terrain.sea_level;
         m_applied_water      = water;
         m_flow_applied       = true;
         m_world.set_physics(w);
@@ -502,6 +646,13 @@ private:
 
     static CapsuleRenderer make_capsule(const RenderSettings& r) {
         return CapsuleRenderer(r.capsule_segments, r.capsule_rings, r.player_color, r.player_visor);
+    }
+
+    void autosave(double dt) {
+        const double every = m_settings.saves.autosave_minutes * SECONDS_PER_MINUTE;
+        if (!m_archive || every <= 0.0) return;
+        m_autosave_timer += dt;
+        if (m_autosave_timer >= every) save_world();
     }
 
     void respawn_player() {
@@ -571,28 +722,223 @@ private:
         m_terrain.set_selection(std::move(sel));
     }
 
+    std::string water_weather_text() const {
+        if (m_settings.water.flow != FlowModel::Realistic) return std::string();
+        const WaterWeatherStats& st = m_water_weather.stats();
+        const vector3d p = m_player->position();
+        char buf[TEXT_BUFFER];
+        std::snprintf(buf, sizeof(buf), "waves %.2f here (%.2f max), rain added %.1f blocks, drained %.1f, washed over %.1f",
+                      m_waves.at(p.x, p.y, wave_scale_at(p.x, p.y)), m_waves.crest(wave_scale_at(p.x, p.y)),
+                      st.rained / RealisticFluid::UNITS, st.drained / RealisticFluid::UNITS, st.spilled / RealisticFluid::UNITS);
+        return buf;
+    }
+
+    std::string weather_text() const {
+        const LocalWeather& w = m_local_weather;
+        std::string out = weather_name(w.kind);
+        if (w.precipitation != Precipitation::None) out += std::string(", ") + precipitation_name(w.precipitation) + " " + std::to_string(static_cast<int>(std::lround(w.amount * PERCENT))) + "%";
+        else if (w.kind != WeatherKind::Clear) out += ", dry here";
+        out += ", " + std::to_string(m_precipitation.count()) + " drops";
+        return out;
+    }
+
+    double precipitation_brightness(const vector3d& eye) const {
+        const LightLevel here = light_level_at(eye);
+        const double sky = m_lighting.enabled() ? m_sky.daylight : 1.0;
+        const double block = static_cast<double>(here.block()) / LightLimits::MAX;
+        return vclamp(vmax(sky * DROP_SKY_LIGHT, block), DROP_MIN_LIGHT, 1.0);
+    }
+
+    double declination() const noexcept {
+        if (m_settings.seasons.mode == SeasonMode::Off) return 0.0;
+        return deg_to_rad(m_settings.seasons.sun_swing) * m_date.warmth;
+    }
+
+    void update_weather(double frame_dt, bool running) {
+        const vector3d eye = m_camera.camera().position();
+        m_date = Calendar::at(m_clock.day(), m_clock.time(), m_settings.seasons);
+        m_climate_timer -= frame_dt;
+
+        if (m_climate_timer <= 0.0) {
+            m_climate_timer = CLIMATE_REFRESH;
+            m_climate = climate_around(eye);
+        }
+
+        const double game_days = static_cast<double>(m_clock.day()) + m_clock.time();
+        m_local_weather = m_weather.local(m_climate, eye.z, m_settings.terrain.sea_level, m_clock.time(), game_days, m_date, m_settings.weather, m_settings.seasons);
+        if (!running) return;
+        m_wind_angle += frame_dt * WIND_TURN * (m_weather_rng.unit() - HALF);
+        const double wind = m_settings.weather.wind * (WIND_CALM + WIND_GUST * m_local_weather.cloud);
+        m_wind = vector3d{ std::cos(m_wind_angle) * wind, std::sin(m_wind_angle) * wind, 0.0 };
+        m_precipitation.update(frame_dt, m_seconds, eye, m_world, m_local_weather, m_settings.weather_view, m_wind);
+        const double storm = m_local_weather.cloud * (m_local_weather.kind == WeatherKind::Storm ? 1.0 : RAIN_SWELL) * m_settings.weather.wind;
+        m_waves.update(m_settings.water.waves, storm, m_wind, m_seconds);
+    }
+
+    void update_water_weather(double dt) {
+        const double hour_seconds = m_settings.day_cycle.real_hour_seconds();
+        const WaterWeatherContext context{ m_world, m_block_ids.water, m_settings.water, m_waves, m_waves_on ? m_water_look.get() : nullptr, m_local_weather,
+                                           m_player->position(), m_settings.terrain.sea_level, hour_seconds };
+        m_water_weather.update(dt, context);
+    }
+
+    void spawn_splashes() {
+        const ParticleTypeIndex* type = m_particle_types.find(Particles::Splash);
+
+        for (const FluidSplash& splash : m_fluids.take_splashes()) {
+            if (!type) continue;
+            const int count = vmin(static_cast<int>(splash.strength * SPLASH_PARTICLES), MAX_SPLASH_PARTICLES);
+            const vector3d at = splash.pos.center() + vector3d{ 0.0, 0.0, HALF };
+
+            for (int i = 0; i < count; ++i) {
+                const double a = m_weather_rng.range(0.0, 2.0 * PI), out = m_weather_rng.range(SPLASH_OUT_MIN, SPLASH_OUT_MAX);
+                const vector3d v{ std::cos(a) * out, std::sin(a) * out, m_weather_rng.range(SPLASH_UP_MIN, SPLASH_UP_MAX) * std::sqrt(splash.strength) };
+                m_particles.spawn(*type, at, v, m_weather_rng);
+            }
+        }
+    }
+
+    double wave_scale_at(double x, double y) const {
+        if (!m_waves_on || !m_water_look) return 0.0;
+        return (*m_water_look)(static_cast<int>(std::floor(x)), static_cast<int>(std::floor(y))).waves;
+    }
+
+    void apply_waves() {
+        const WaterSettings& water = m_settings.water;
+        m_waves_on = water.flow == FlowModel::Realistic && water.waves.enabled;
+
+        if (!m_water_look) {
+            const WorldGenerator* generator = m_generator.get();
+            const TerrainSettings terrain = m_settings.terrain;
+
+            m_water_look = std::make_shared<const WaterLook>([generator, terrain](int x, int y) {
+                std::array<BiomeClimate, WATER_SAMPLES * WATER_SAMPLES> found{};
+                std::size_t count = 0;
+
+                for (int i = 0; i < WATER_SAMPLES; ++i) {
+                    for (int j = 0; j < WATER_SAMPLES; ++j) {
+                        const int sx = x + (i - WATER_SAMPLES / 2) * WATER_SPACING, sy = y + (j - WATER_SAMPLES / 2) * WATER_SPACING;
+                        const Biome* biome = generator->biome_at(sx, sy);
+                        if (biome) found[count++] = BiomeWeather::effective(*biome, terrain.biome(biome->id().str()));
+                    }
+                }
+
+                if (count == 0) return WaterSample{};
+                const BiomeClimate c = BiomeWeather::blend(found.data(), count);
+                return WaterSample{ vclamp(c.waves, 0.0, 1.0), c.water };
+            });
+        }
+
+        m_terrain.set_water(m_water_look, m_waves_on);
+    }
+
+    BiomeClimate climate_around(const vector3d& p) const {
+        std::array<BiomeClimate, CLIMATE_SAMPLES> found{};
+        std::size_t count = 0;
+
+        for (const auto& offset : CLIMATE_OFFSETS) {
+            const int x = static_cast<int>(std::floor(p.x + offset[0] * CLIMATE_REACH)), y = static_cast<int>(std::floor(p.y + offset[1] * CLIMATE_REACH));
+            const Biome* biome = m_generator->biome_at(x, y);
+            if (biome) found[count++] = BiomeWeather::effective(*biome, m_settings.terrain.biome(biome->id().str()));
+        }
+
+        return BiomeWeather::blend(found.data(), count);
+    }
+
+    void restore_weather(const WorldState& s) {
+        if (!s.has_weather) {
+            m_weather.force(WeatherKind::Clear, m_settings.weather, m_weather_rng);
+            WeatherState w = m_weather.state();
+            w.remaining = m_settings.weather.clear_days;
+            m_weather.set_state(w);
+            return;
+        }
+
+        WeatherState w;
+        w.kind      = static_cast<WeatherKind>(vclamp(s.weather_kind, 0, static_cast<int>(WeatherKind::Storm)));
+        w.intensity = s.weather_intensity;
+        w.target    = s.weather_target;
+        w.remaining = s.weather_remaining;
+        w.hail      = s.weather_hail;
+        m_weather.set_state(w);
+    }
+
+    void store_weather(WorldState& s) const {
+        const WeatherState& w = m_weather.state();
+        s.has_weather       = true;
+        s.weather_kind      = static_cast<int>(w.kind);
+        s.weather_intensity = w.intensity;
+        s.weather_target    = w.target;
+        s.weather_remaining = w.remaining;
+        s.weather_hail      = w.hail;
+    }
+
     void tick_once(double dt) {
         m_simulation.center = m_player->position();
         m_simulation.radius = static_cast<double>(simulation_distance()) * Chunk::SIZE;
         m_simulation.world  = &m_world;
         TickContext ctx{ m_world, m_physics, m_entities, dt, &m_simulation };
         gather_displacers();
+        const auto fluids_start = Clock::now();
         m_fluids.update(m_world, dt, m_simulation.center, m_simulation.radius);
+        m_cpu_frame.fluids += ms_between(fluids_start, Clock::now());
+        spawn_splashes();
+        update_water_weather(dt);
         m_entities.tick(ctx);
         m_clock.advance(dt, m_settings.day_cycle);
+        const double day_seconds = m_settings.day_cycle.real_day_seconds();
+        m_date = Calendar::at(m_clock.day(), m_clock.time(), m_settings.seasons);
+        m_weather.update(day_seconds > 0.0 ? dt / day_seconds : 0.0, dt, m_settings.weather, m_date, m_weather_rng);
         if (m_jump_latch) { m_jump_latch = false; MovementIntent i = m_player->intent(); i.jump = false; m_player->set_intent(i); }
         const double void_z = m_world.settings().min_z - m_world.settings().void_depth;
         if (m_player->position().z < void_z) respawn_player();
     }
 
+    using Clock = std::chrono::steady_clock;
+
+    static double ms_between(Clock::time_point a, Clock::time_point b) noexcept {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    }
+
     inline static const vector3d LEGACY_SUN{ -0.35, 0.55, -1.0 };
-    static constexpr int LOOK_SETTLE_FRAMES = 2;
+    static constexpr int         LOOK_SETTLE_FRAMES   = 2;
+    static constexpr double      SECONDS_PER_MINUTE   = 60.0;
+    static constexpr std::size_t CLIMATE_SAMPLES      = 5;
+    static constexpr double      CLIMATE_REFRESH      = 0.5;
+    static constexpr double      CLIMATE_REACH        = 24.0;
+    static constexpr int         WATER_SAMPLES        = 3;
+    static constexpr int         WATER_SPACING        = 8;
+    static constexpr double      WIND_TURN            = 0.4;
+    static constexpr double      WIND_CALM            = 0.6;
+    static constexpr double      WIND_GUST            = 2.4;
+    static constexpr double      HALF                 = 0.5;
+    static constexpr double      PERCENT              = 100.0;
+    static constexpr double      DROP_SKY_LIGHT       = 0.95;
+    static constexpr double      DROP_MIN_LIGHT       = 0.08;
+    static constexpr double      RAIN_SWELL           = 0.45;
+    static constexpr std::size_t TEXT_BUFFER          = 160;
+    static constexpr double      SPLASH_PARTICLES     = 6.0;
+    static constexpr int         MAX_SPLASH_PARTICLES = 40;
+    static constexpr double      SPLASH_OUT_MIN       = 0.5;
+    static constexpr double      SPLASH_OUT_MAX       = 2.5;
+    static constexpr double      SPLASH_UP_MIN        = 1.5;
+    static constexpr double      SPLASH_UP_MAX        = 3.5;
+    static constexpr std::array<std::array<double, 2>, CLIMATE_SAMPLES> CLIMATE_OFFSETS{ { { 0.0, 0.0 }, { 1.0, 0.0 }, { -1.0, 0.0 }, { 0.0, 1.0 }, { 0.0, -1.0 } } };
 
     static Color opaque(const Color& c) noexcept { return Color(c.red(), c.green(), c.blue()); }
 
     void gather_displacers() {
         m_displacers.clear();
-        if (m_world.fluid_rules().displaces()) m_entities.for_each([this](const Entity& e) { m_displacers.push_back(e.bounding_box()); });
+        const WaterSettings& water = m_settings.water;
+
+        if (m_world.fluid_rules().displaces()) m_entities.for_each([this, &water](const Entity& e) {
+            const AABB box = e.bounding_box();
+            const vector3d size = box.max - box.min;
+            const double volume = size.x * size.y * size.z;
+            double share = 1.0;
+            if (water.displace_by == DisplaceBy::Weight && volume > 0.0) share = vmin(1.0, e.mass() / vmax(water.fluid_density, 1.0) / volume);
+            m_displacers.push_back({ box, share });
+        });
         m_world.displace(m_displacers);
     }
 
@@ -677,8 +1023,29 @@ private:
     WaterPresets                    m_water_presets = WaterPresets::builtin();
     WaterSettings                   m_applied_water;
     bool                            m_flow_applied = false;
-    std::vector<AABB>               m_displacers;
+    int                             m_applied_sea  = RealisticFluid::NO_SEA;
+    std::vector<FluidDisplacer>     m_displacers;
     bool                            m_display_dirty = false;
+    bool                            m_quit_requested = false;
+    double                          m_autosave_timer = 0.0;
+    WorldSlot                       m_slot;
+    std::unique_ptr<ChunkArchive>   m_archive;
+    PauseMenu                       m_pause;
+    WeatherSystem                   m_weather;
+    PrecipitationRenderer           m_precipitation;
+    LocalWeather                    m_local_weather;
+    CalendarDate                    m_date;
+    BiomeClimate                    m_climate;
+    SeededRandom                    m_weather_rng;
+    double                          m_climate_timer = 0.0;
+    double                          m_wind_angle = 0.0;
+    vector3d                        m_wind{};
+    WaveField                       m_waves;
+    WaterWeather                    m_water_weather;
+    WaterLookPtr                    m_water_look;
+    CpuTimings                      m_cpu;
+    CpuTimings                      m_cpu_frame;
+    bool                            m_waves_on = false;
     bool                            m_key_consumed = false;
     int                             m_ignore_look = 0;
     WorldRenderStats                m_stats;

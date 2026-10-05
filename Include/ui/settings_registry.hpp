@@ -17,10 +17,15 @@ struct SettingsTabSpec {
     std::string                  name;
     std::string                  summary;
     std::vector<SettingsBuilder> builders;
+    std::string                  group;
 };
 
 class SettingsRegistry {
 public:
+    void               set_group(std::string name) { m_group = std::move(name); }
+    void               end_group() { m_group.clear(); }
+    const std::string& group() const noexcept { return m_group; }
+
     SettingsTabSpec& add_tab(
         const std::string& id, 
         const std::string& name, 
@@ -37,7 +42,7 @@ public:
             return *existing;
         }
 
-        SettingsTabSpec spec{ id, name, summary, {} };
+        SettingsTabSpec spec{ id, name, summary, {}, m_group };
         if (builder) spec.builders.push_back(std::move(builder));
         auto at = before.empty() ? m_tabs.end() : position(before);
         return *m_tabs.insert(at, std::move(spec));
@@ -69,7 +74,7 @@ public:
         out.reserve(m_tabs.size());
 
         for (const SettingsTabSpec& spec : m_tabs) {
-            out.push_back({ spec.id, spec.name, spec.summary, {} });
+            out.push_back({ spec.id, spec.name, spec.summary, {}, spec.group });
 
             for (const SettingsBuilder& build : spec.builders) {
                 SettingsPage page(out.back(), live, defaults);
@@ -86,6 +91,7 @@ private:
     }
 
     std::vector<SettingsTabSpec> m_tabs;
+    std::string                  m_group;
 };
 
 } // namespace voxelspire

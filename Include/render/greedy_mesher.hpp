@@ -44,6 +44,7 @@ struct FaceKey {
     static constexpr int           SURFACE_STEPS = 63;
     static constexpr int           MAX_VARIATION = 255;
     static constexpr std::uint64_t BYTE_MASK     = 0xFF;
+    static constexpr std::uint64_t COLOR_MASK    = 0xFFFFFFFF;
 
     static std::uint64_t make(const Color& base, int variation, std::uint8_t shade, bool translucent = false, std::uint8_t vertex_flags = 0) noexcept {
         return HAS_FACE | (translucent ? TRANSLUCENT : 0) | fizmo::graphics::Vertex3D::pack(base)
@@ -53,6 +54,10 @@ struct FaceKey {
     }
 
     static std::uint8_t vertex_flags(std::uint64_t key) noexcept { return static_cast<std::uint8_t>(key >> FLAGS_SHIFT); }
+
+    static std::uint64_t with_color(std::uint64_t key, const Color& c) noexcept {
+        return (key & ~COLOR_MASK) | fizmo::graphics::Vertex3D::pack(c);
+    }
 
     static std::uint8_t finish_flags(SurfaceFinish finish) noexcept {
         switch (finish) {
@@ -79,7 +84,6 @@ struct FaceKey {
     static std::uint8_t variation(std::uint64_t key) noexcept { return static_cast<std::uint8_t>(key >> VAR_SHIFT); }
     static std::uint8_t shade(std::uint64_t key)     noexcept { return static_cast<std::uint8_t>(key >> SHADE_SHIFT); }
     static bool translucent(std::uint64_t key)       noexcept { return (key & TRANSLUCENT) != 0; }
-
 
     static std::uint64_t with_surface(std::uint64_t key, double height, std::uint8_t flow) noexcept {
         const auto steps = static_cast<std::uint64_t>(vclamp(std::lround((1.0 - height) * SURFACE_STEPS), 0L, static_cast<long>(SURFACE_STEPS)));

@@ -6,7 +6,6 @@
 #include <vector>
 #include "../world/world.hpp"
 #include "dynamic_light.hpp"
-#include "settings.hpp"
 #include "sun_path.hpp"
 
 namespace voxelspire {
@@ -14,6 +13,7 @@ namespace voxelspire {
 class LightingDirector {
 public:
     void configure(const LightingSettings& settings) { m_settings = settings; }
+    void set_swell(const fizmo::graphics::Swell3D& swell) noexcept { m_swell = swell; }
     const LightingSettings& settings() const noexcept { return m_settings; }
 
     bool enabled() const noexcept {
@@ -136,13 +136,13 @@ private:
         a.zenith        = sky.zenith;
         a.horizon       = sky.horizon;
         a.glow          = sky.glow;
-        a.glow_strength = static_cast<float>(s.sky_glow * (1.0 - sky.night));
+        a.glow_strength = static_cast<float>(s.sky_glow * (1.0 - sky.night) * sky.clear);
         a.sun_disk      = 0.0f;
         a.moon_disk     = 0.0f;
         a.stars         = 0.0f;
         a.glow_spread   = static_cast<float>(s.sun_glow_spread);
         a.glow_focus    = static_cast<float>(s.sun_glow_focus);
-        a.fog_density   = static_cast<float>(s.fog_density);
+        a.fog_density   = static_cast<float>(s.fog_density * (1.0 + sky.fog_boost));
         a.fog_start     = static_cast<float>(s.fog_start);
 
         Volumetrics3D& v = out.volumetrics;
@@ -172,8 +172,9 @@ private:
 
         Surfaces3D& f = out.surfaces;
         f.reflectivity   = s.reflections ? static_cast<float>(s.reflectivity) : 0.0f;
-        f.specular       = s.reflections ? static_cast<float>(s.specular) : 0.0f;
-        f.wave_strength  = static_cast<float>(s.wave_strength);
+        f.specular       = s.reflections ? static_cast<float>(s.specular * sky.clear) : 0.0f;
+        f.wave_strength  = static_cast<float>(s.wave_strength * sky.waves);
+        f.swell          = m_swell;
         f.wave_scale     = static_cast<float>(s.wave_scale);
         f.wave_speed     = static_cast<float>(s.wave_speed);
         f.specular_power = static_cast<float>(s.specular_power);
@@ -267,6 +268,7 @@ private:
     LightingSettings                                m_settings;
     fizmo::graphics::SceneLighting3D                m_scene;
     std::vector<fizmo::graphics::ReflectionPlane3D> m_planes;
+    fizmo::graphics::Swell3D                        m_swell;
     std::vector<EmitterBlock>                       m_emitters;
     std::vector<std::pair<double, std::size_t>>     m_order;
     std::vector<fizmo::graphics::CapsuleOccluder3D> m_occluders;

@@ -8,7 +8,7 @@
 
 namespace voxelspire {
 
-enum class TextFilter : std::uint8_t { Integer = 0, Decimal, Hex };
+enum class TextFilter : std::uint8_t { Integer = 0, Decimal, Hex, Text };
 
 enum class TextResult : std::uint8_t { Ignored = 0, Edited, Blocked, Commit, Cancel, Next, Previous };
 
@@ -18,6 +18,9 @@ public:
     static constexpr char        MINUS          = '-';
     static constexpr char        DOT            = '.';
     static constexpr char        HASH           = '#';
+    static constexpr char        FIRST_PRINTABLE = ' ';
+    static constexpr char        LAST_PRINTABLE  = '~';
+    static constexpr const char* SPACE_KEY       = "Space";
 
     void begin(std::string text, TextFilter filter, bool allow_negative, std::size_t max_length = DEFAULT_LENGTH) {
         m_text     = std::move(text);
@@ -49,6 +52,7 @@ public:
         if (name == "RightArrow") { m_caret = m_all ? m_text.size() : (m_caret < m_text.size() ? m_caret + 1 : m_caret); m_all = false; return TextResult::Edited; }
         if (name == "Home") { m_caret = 0; m_all = false; return TextResult::Edited; }
         if (name == "End") { m_caret = m_text.size(); m_all = false; return TextResult::Edited; }
+        if (name == SPACE_KEY && m_filter == TextFilter::Text) return insert(' ');
         if (name.size() != 1) return TextResult::Blocked;
         return insert(name[0]);
     }
@@ -67,6 +71,7 @@ private:
 
     bool allowed(const std::string& text, std::size_t at, char ch) const noexcept {
         const bool digit = std::isdigit(static_cast<unsigned char>(ch)) != 0;
+        if (m_filter == TextFilter::Text) return ch >= FIRST_PRINTABLE && ch <= LAST_PRINTABLE;
         const bool leads_with_sign = !text.empty() && (text[0] == MINUS || text[0] == HASH);
         if (at == 0 && leads_with_sign) return false;
 
@@ -77,6 +82,8 @@ private:
                 return digit || (ch == MINUS && m_negative && at == 0) || (ch == DOT && text.find(DOT) == std::string::npos);
             case TextFilter::Hex:
                 return std::isxdigit(static_cast<unsigned char>(ch)) != 0 || (ch == HASH && at == 0);
+            case TextFilter::Text:
+                return true;
         }
 
         return false;

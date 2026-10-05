@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <unordered_map>
@@ -128,9 +129,14 @@ public:
         return it == m_occupancy.end() ? FluidOccupancy{} : it->second;
     }
 
-    void displace(const std::vector<AABB>& boxes) {
+    using WaveSampler = std::function<double(double, double)>;
+
+    void   set_wave_sampler(WaveSampler sampler) { m_waves = std::move(sampler); }
+    double wave_offset(double x, double y) const { return m_waves ? m_waves(x, y) : 0.0; }
+
+    void displace(const std::vector<FluidDisplacer>& bodies) {
         m_next_occupancy.clear();
-        if (m_settings.fluid_rules->displaces()) for (const AABB& box : boxes) occupy(box);
+        if (m_settings.fluid_rules->displaces()) for (const FluidDisplacer& body : bodies) occupy(body.box, body.share);
 
         for (const auto& kv : m_next_occupancy) {
             auto it = m_occupancy.find(kv.first);
@@ -319,7 +325,7 @@ private:
                 for (int dx = -1; dx <= 1; ++dx) mark_changed(chunk_pos_of({ p.x + dx, p.y + dy, p.z + dz }));
     }
 
-    void occupy(const AABB& box) {
+    void occupy(const AABB& box, double share) {
         const BlockPos lo = BlockPos::containing(box.min);
         const BlockPos hi = BlockPos::containing(box.max);
         const BlockTraits* traits = m_registry->traits_table();
@@ -333,7 +339,7 @@ private:
                     const double wx = vmin(box.max.x, x + 1.0) - vmax(box.min.x, static_cast<double>(x));
                     const double wy = vmin(box.max.y, y + 1.0) - vmax(box.min.y, static_cast<double>(y));
                     const double bottom = box.min.z - z, top = box.max.z - z;
-                    const FluidOccupancy occ = FluidOccupancy::of(wx * wy, bottom, top);
+                    const FluidOccupancy occ = FluidOccupancy::of(wx * wy * vclamp(share, 0.0, 1.0), bottom, top);
                     if (!occ.empty()) m_next_occupancy[p].merge(occ);
                 }
     }
@@ -452,6 +458,7 @@ private:
     std::unordered_set<ColumnPos, ColumnPosHash>   m_edited_set;
     std::unique_ptr<LightEngine>                   m_light;
     std::vector<BlockPos>                          m_fluid_wakes;
+    WaveSampler                                    m_waves;
     OccupancyMap                                   m_occupancy;
     OccupancyMap                                   m_next_occupancy;
     std::uint64_t                                  m_revision = 0;

@@ -9,10 +9,10 @@
 namespace voxelspire {
 
 namespace Poses {
-    inline const Identifier Standing  { "voxelspire:standing" };
-    inline const Identifier Crouching { "voxelspire:crouching" };
-    inline const Identifier Prone     { "voxelspire:prone" };
-    inline const Identifier Swimming  { "voxelspire:swimming" };
+    inline const Identifier Standing  = core_id(Kind::Pose, "standing");
+    inline const Identifier Crouching = core_id(Kind::Pose, "crouching");
+    inline const Identifier Prone     = core_id(Kind::Pose, "prone");
+    inline const Identifier Swimming  = core_id(Kind::Pose, "swimming");
 } // namespace Poses
 
 struct PoseDimensions {

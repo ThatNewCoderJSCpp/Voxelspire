@@ -6,7 +6,7 @@
 #include <memory>
 #include <utility>
 #include <vector>
-#include "character_settings.hpp"
+#include "../core/settings.hpp"
 #include "../core/function_ref.hpp"
 #include "../core/types.hpp"
 
@@ -50,14 +50,14 @@ struct MovementContext {
 };
 
 namespace MovementModes {
-    inline const Identifier Walk    { "voxelspire:walk" };
-    inline const Identifier Sprint  { "voxelspire:sprint" };
-    inline const Identifier Crouch  { "voxelspire:crouch" };
-    inline const Identifier Crawl   { "voxelspire:crawl" };
-    inline const Identifier Swim    { "voxelspire:swim" };
-    inline const Identifier Stroke  { "voxelspire:swim_stroke" };
-    inline const Identifier Flutter { "voxelspire:flutter" };
-    inline const Identifier Fly     { "voxelspire:fly" };
+    inline const Identifier Walk    = core_id(Kind::Movement, "walk");
+    inline const Identifier Sprint  = core_id(Kind::Movement, "sprint");
+    inline const Identifier Crouch  = core_id(Kind::Movement, "crouch");
+    inline const Identifier Crawl   = core_id(Kind::Movement, "crawl");
+    inline const Identifier Swim    = core_id(Kind::Movement, "swim");
+    inline const Identifier Stroke  = core_id(Kind::Movement, "swim_stroke");
+    inline const Identifier Flutter = core_id(Kind::Movement, "flutter");
+    inline const Identifier Fly     = core_id(Kind::Movement, "fly");
 } // namespace MovementModes
 
 struct MovementRatios {
@@ -301,7 +301,8 @@ public:
     }
 
 private:
-    double m_vertical_speed, m_vertical_accel;
+    double m_vertical_speed;
+    double m_vertical_accel;
 };
 
 class MovementModeRegistry {

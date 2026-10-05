@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -40,7 +41,7 @@ public:
     bool capturing() const noexcept { return m_capture >= 0; }
     bool editing()   const noexcept { return m_field.active(); }
 
-    void open() { m_open = true; m_capture = -1; m_drag = {}; m_close_requested = false; }
+    void open() { m_open = true; m_capture = -1; m_drag = {}; m_close_requested = false; m_cancel_requested = false; }
 
     void close() {
         stop_editing(true);
@@ -51,6 +52,17 @@ public:
     }
 
     bool take_close_request() noexcept { const bool r = m_close_requested; m_close_requested = false; return r; }
+    bool take_cancel_request() noexcept { const bool r = m_cancel_requested; m_cancel_requested = false; return r; }
+
+    void set_title(std::string title) { m_title = std::move(title); }
+    void set_hint(std::string hint) { m_hint = std::move(hint); }
+
+    void set_actions(std::string done, std::string cancel = std::string()) {
+        m_done_label   = std::move(done);
+        m_cancel_label = std::move(cancel);
+    }
+
+    void select_tab(std::size_t index) noexcept { m_tab = m_tabs.empty() ? 0 : vmin(index, m_tabs.size() - 1); m_scroll = 0; }
     std::uint32_t take_changes() noexcept { const std::uint32_t c = m_changes; m_changes = Apply::Nothing; return c; }
 
     void set_save_note(const char* note) noexcept { m_save_note = note; }
@@ -139,7 +151,8 @@ public:
         m_hover_control = m_picker.is_open() ? -1 : (hover && hover->control >= 0 ? hover->control : row_at(mx, my));
 
         if (m_scroll_steps != 0) {
-            if (!m_picker.is_open()) m_scroll -= m_scroll_steps * SCROLL_ROWS * m_row_h;
+            if (hot(m_side.x, m_side.y, m_side.w, m_side.h)) m_tab_scroll -= m_scroll_steps * SCROLL_ROWS * m_paint.px(TAB_H);
+            else if (!m_picker.is_open()) m_scroll -= m_scroll_steps * SCROLL_ROWS * m_row_h;
             m_scroll_steps = 0;
         }
 
@@ -162,8 +175,8 @@ public:
         p.rect(0, 0, static_cast<int>(w), static_cast<int>(h), style.backdrop);
         p.rect(x0, y0, pw, ph, style.panel);
         p.rect(x0, y0, side, ph, style.sidebar);
-        p.text(x0 + p.px(PAD), y0 + head / 2, "Settings", p.px(TITLE_SIZE), style.text, true);
-        draw_tabs(x0, y0 + head, side, style);
+        p.text(x0 + p.px(PAD), y0 + head / 2, m_title, p.px(TITLE_SIZE), style.text, true);
+        draw_tabs(x0, y0 + head, side, ph - head, style);
 
         const SettingsTab& tab = m_tabs[m_tab];
         const int cx = x0 + side + p.px(PAD), cw = pw - side - p.px(PAD) * 2;
@@ -186,7 +199,7 @@ public:
     }
 
 private:
-    enum class Target : std::uint8_t { None = 0, Number, Hex, Channel, PickerHex, PickerChannel };
+    enum class Target : std::uint8_t { None = 0, Number, Hex, Channel, PickerHex, PickerChannel, Text };
 
     struct Row { int y = 0, h = 0, control = -1; };
     struct Span { int x = 0, w = 1; };
@@ -230,6 +243,10 @@ private:
     static constexpr double      ROW_H          = 38.0;
     static constexpr double      HEADER_ROW_H   = 46.0;
     static constexpr double      TAB_H          = 36.0;
+    static constexpr double      GROUP_H        = 30.0;
+    static constexpr double      GROUP_SIZE     = 12.0;
+    static constexpr double      GROUP_DROP     = 3.0;
+    static constexpr double      GROUP_INDENT   = 8.0;
     static constexpr double      TEXT_SIZE      = 15.0;
     static constexpr double      SMALL_SIZE     = 13.0;
     static constexpr double      TITLE_SIZE     = 22.0;
@@ -262,6 +279,7 @@ private:
     static constexpr std::size_t NUMBER_LENGTH  = 16;
     static constexpr std::size_t CHANNEL_LENGTH = 3;
     static constexpr std::size_t HEX_LENGTH     = 9;
+    static constexpr std::size_t TEXT_LENGTH    = 64;
     static constexpr const char* CANCEL_KEY     = "Escape";
 
     void click(int x, int y) {
@@ -327,12 +345,41 @@ private:
         return l;
     }
 
-    void draw_tabs(int x, int y, int w, const MenuSettings& style) {
+    bool group_starts(std::size_t i) const noexcept {
+        return !m_tabs[i].group.empty() && (i == 0 || m_tabs[i - 1].group != m_tabs[i].group);
+    }
+
+    bool tab_shown(std::size_t i) const {
+        return i == m_tab || m_tabs[i].group.empty() || !m_closed_groups.count(m_tabs[i].group);
+    }
+
+    void draw_tabs(int x, int y, int w, int h, const MenuSettings& style) {
         MenuPainter& p = m_paint;
-        const int th = p.px(TAB_H);
+        const int th = p.px(TAB_H), gh = p.px(GROUP_H);
+        m_side = { x, y, w, h };
+        int total = 0;
 
         for (std::size_t i = 0; i < m_tabs.size(); ++i) {
-            const int ty = y + static_cast<int>(i) * th;
+            if (group_starts(i)) total += gh;
+            if (tab_shown(i)) total += th;
+        }
+
+        m_tab_scroll = vclamp(m_tab_scroll, 0, vmax(0, total - h));
+        p.renderer().set_clip_rect(x, y, static_cast<unsigned int>(w), static_cast<unsigned int>(vmax(h, 0)));
+        const std::size_t hits_before = m_hits.size();
+        int ty = y - m_tab_scroll;
+
+        for (std::size_t i = 0; i < m_tabs.size(); ++i) {
+            if (group_starts(i)) {
+                const bool closed = m_closed_groups.count(m_tabs[i].group) > 0;
+                if (hot(x, ty, w, gh)) p.rect(x, ty, w, gh, style.row_hover);
+                p.text(x + p.px(PAD), ty + gh / 2 + p.px(GROUP_DROP), upper(m_tabs[i].group), p.px(GROUP_SIZE), style.accent, true);
+                p.text(x + w - p.px(PAD), ty + gh / 2 + p.px(GROUP_DROP), closed ? "+" : "-", p.px(GROUP_SIZE), style.muted, true);
+                add_hit(x, ty, w, gh, HitKind::Group, -1, static_cast<int>(i));
+                ty += gh;
+            }
+
+            if (!tab_shown(i)) continue;
             const bool selected = i == m_tab;
 
             if (selected) {
@@ -342,8 +389,25 @@ private:
                 p.rect(x, ty, w, th, style.row_hover);
             }
 
-            p.text(x + p.px(PAD), ty + th / 2, m_tabs[i].name, p.px(TEXT_SIZE), selected ? style.text : style.muted, selected);
+            const int indent = m_tabs[i].group.empty() ? 0 : p.px(GROUP_INDENT);
+            p.text(x + p.px(PAD) + indent, ty + th / 2, m_tabs[i].name, p.px(TEXT_SIZE), selected ? style.text : style.muted, selected);
             add_hit(x, ty, w, th, HitKind::Tab, -1, static_cast<int>(i));
+            ty += th;
+        }
+
+        for (std::size_t i = hits_before; i < m_hits.size(); ++i) {
+            Hit& hit = m_hits[i];
+            const int from = vmax(hit.y, y), to = vmin(hit.y + hit.h, y + h);
+            hit.h = vmax(0, to - from);
+            hit.y = from;
+        }
+
+        p.renderer().reset_clip_rect();
+
+        if (total > h) {
+            const int bar_h = vmax(th, h * h / total);
+            const int bar_y = y + (h - bar_h) * m_tab_scroll / vmax(1, total - h);
+            p.rect(x + w - p.px(SCROLLBAR_W), bar_y, p.px(SCROLLBAR_W), bar_h, MenuPainter::faded(style.muted, DIM_ALPHA));
         }
     }
 
@@ -539,6 +603,19 @@ private:
                 break;
             }
 
+            case ControlKind::Text: {
+                const int bh = p.px(SMALL_BUTTON);
+                FieldLook l = look(style, on);
+                l.editing = editing(index, Target::Text);
+                l.failed = error_on(index, Target::Text);
+                l.hot = on && hot(x, mid - bh / 2, w, bh);
+                if (l.editing) { l.all_selected = m_field.all_selected(); l.caret = m_field.caret(); l.caret_on = caret_on(); }
+                p.field(x, mid - bh / 2, w, bh, l.editing ? m_field.text() : c.get_text(), std::string(), l);
+                m_boxes[index] = { x, mid - bh / 2, w, bh };
+                hit(x, mid - bh / 2, w, bh, HitKind::TextValue);
+                break;
+            }
+
             case ControlKind::Button: {
                 const int bh = p.px(BUTTON_H) * 3 / 4, bw = vmin(w, p.px(BUTTON_W) * 2);
                 p.button(x, mid - bh / 2, bw, bh, c.label, style.control, fg, on && hot(x, mid - bh / 2, bw, bh), small);
@@ -583,10 +660,18 @@ private:
         p.renderer().draw_line(x, y, x + w, y, fizmo::graphics::Paint::stroke(MenuPainter::faded(style.muted, DIM_ALPHA), 1));
         const int bw = p.px(BUTTON_W), bh = p.px(BUTTON_H), gap = p.px(GAP) * 2, small = p.px(SMALL_SIZE);
         const int done_x = x + w - p.px(PAD) - bw, by = y + (h - bh) / 2;
-        const int reset_x = done_x - gap - bw;
-        p.button(done_x, by, bw, bh, "Done", style.accent, Color(255, 255, 255), hot(done_x, by, bw, bh), small);
-        p.button(reset_x, by, bw, bh, "Reset tab", style.control, style.text, hot(reset_x, by, bw, bh), small);
+        p.button(done_x, by, bw, bh, m_done_label, style.accent, Color(255, 255, 255), hot(done_x, by, bw, bh), small);
         add_hit(done_x, by, bw, bh, HitKind::Close);
+        int left = done_x;
+
+        if (!m_cancel_label.empty()) {
+            left -= gap + bw;
+            p.button(left, by, bw, bh, m_cancel_label, style.control, style.text, hot(left, by, bw, bh), small);
+            add_hit(left, by, bw, bh, HitKind::Cancel);
+        }
+
+        const int reset_x = left - gap - bw;
+        p.button(reset_x, by, bw, bh, "Reset tab", style.control, style.text, hot(reset_x, by, bw, bh), small);
         add_hit(reset_x, by, bw, bh, HitKind::ResetTab);
         const int text_x = x + p.px(PAD);
         const int text_w = reset_x - gap - text_x;
@@ -614,7 +699,7 @@ private:
             body = c->description + hover_help(*c);
         } else {
             title = "Hover a setting to see what it does.";
-            body = "Changes apply immediately" + std::string(m_save_note);
+            body = m_hint.empty() ? "Changes apply immediately" + std::string(m_save_note) : m_hint;
         }
 
         p.renderer().set_clip_rect(text_x, y, static_cast<unsigned int>(vmax(0, text_w)), static_cast<unsigned int>(h));
@@ -636,6 +721,7 @@ private:
         const bool channel = m_edit.target == Target::Channel || m_edit.target == Target::PickerChannel;
         const bool hex = m_edit.target == Target::Hex || m_edit.target == Target::PickerHex;
         const std::string keys = " Enter applies, Esc cancels, Tab moves on.";
+        if (m_edit.target == Target::Text) return "Type any text" + (c && c->max_length > 0 ? std::string(" up to ") + std::to_string(c->max_length) + " characters." : std::string(".")) + keys;
         if (hex) return std::string("Type a hex color like #FFA040") + (c && c->with_alpha ? " or #FFA040C0." : ".") + keys;
         if (channel) return "Type a whole number from 0 to 255." + keys;
         if (!c) return keys;
@@ -749,6 +835,9 @@ private:
             case Target::PickerHex:
                 m_field.begin(ColorMath::to_hex(c->get_color(), c->with_alpha), TextFilter::Hex, false, HEX_LENGTH);
                 break;
+            case Target::Text:
+                m_field.begin(c->get_text(), TextFilter::Text, false, c->max_length > 0 ? c->max_length : TEXT_LENGTH);
+                break;
             case Target::None: break;
         }
     }
@@ -761,6 +850,7 @@ private:
             case HitKind::Channel:       return m_edit.target == Target::Channel && m_edit.part == h.part;
             case HitKind::PickerHex:     return m_edit.target == Target::PickerHex;
             case HitKind::PickerChannel: return m_edit.target == Target::PickerChannel && m_edit.part == h.part;
+            case HitKind::TextValue:     return m_edit.target == Target::Text;
             default:                     return false;
         }
     }
@@ -791,6 +881,12 @@ private:
                 const NumberCheck check = check_value(text, { 0.0, static_cast<double>(CHANNEL_MAX) }, true);
                 if (check.ok) set_color(*c, ColorMath::with_channel(c->get_color(), edit.part, static_cast<int>(check.value)));
                 else fail(*c, edit, check.error);
+                break;
+            }
+            case Target::Text: {
+                const std::string clean = trimmed(text);
+                if (clean.empty()) fail(*c, edit, "Type at least one character.");
+                else { const std::string before = c->get_text(); c->set_text(clean); if (c->get_text() != before) changed(*c); }
                 break;
             }
             case Target::Hex:
@@ -883,8 +979,16 @@ private:
                 m_boxes.clear();
                 m_error.control = -1;
                 return;
+            case HitKind::Group: {
+                const std::string& group = m_tabs[static_cast<std::size_t>(h.part)].group;
+                if (!m_closed_groups.erase(group)) m_closed_groups.insert(group);
+                return;
+            }
             case HitKind::Close:
                 m_close_requested = true;
+                return;
+            case HitKind::Cancel:
+                m_cancel_requested = true;
                 return;
             case HitKind::ResetTab:
                 for (SettingControl& each : m_tabs[m_tab].controls) {
@@ -921,6 +1025,7 @@ private:
                 break;
             }
             case HitKind::Hex: begin_edit(Target::Hex, h.control, 0); break;
+            case HitKind::TextValue: begin_edit(Target::Text, h.control, 0); break;
             case HitKind::Swatch: m_picker.open(*c, h.control); break;
             case HitKind::Wheel:
                 if (!m_picker.on_wheel(m_mouse_x, m_mouse_y)) break;
@@ -990,8 +1095,16 @@ private:
     Problem                       m_error;
     Drag                          m_drag;
     std::size_t                   m_tab = 0;
+    int                           m_tab_scroll = 0;
+    Box                           m_side;
+    std::set<std::string>         m_closed_groups;
     bool                          m_open = false;
     bool                          m_close_requested = false;
+    bool                          m_cancel_requested = false;
+    std::string                   m_title = "Settings";
+    std::string                   m_hint;
+    std::string                   m_done_label = "Done";
+    std::string                   m_cancel_label;
     int                           m_capture = -1;
     bool                          m_capture_add = false;
     bool                          m_click_seen = false;

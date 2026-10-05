@@ -4,8 +4,7 @@
 #include <functional>
 #include <string>
 #include <vector>
-#include "../lighting/presets.hpp"
-#include "../physics/water_presets.hpp"
+#include "../core/presets.hpp"
 #include "settings_registry.hpp"
 
 namespace voxelspire {
@@ -16,6 +15,15 @@ struct SettingsHooks {
     std::function<void()>       save;
     std::function<void()>       reload;
     std::function<void()>       respawn;
+    std::function<void()>       save_world;
+};
+
+struct SettingsGroups {
+    static constexpr const char* GAME        = "Game";
+    static constexpr const char* GRAPHICS    = "Graphics";
+    static constexpr const char* PERFORMANCE = "Performance";
+    static constexpr const char* GAMEPLAY    = "Gameplay";
+    static constexpr const char* SKY         = "Sky";
 };
 
 struct SettingsTabs {
@@ -26,6 +34,8 @@ struct SettingsTabs {
     static constexpr const char* WATER       = "water";
     static constexpr const char* TIME        = "time_sky";
     static constexpr const char* CELESTIAL   = "sun_moon_stars";
+    static constexpr const char* SEASONS     = "seasons";
+    static constexpr const char* WEATHER     = "weather";
     static constexpr const char* LIGHTING    = "lighting";
     static constexpr const char* SHADOWS     = "shadows";
     static constexpr const char* ATMOSPHERE  = "atmosphere";
@@ -39,28 +49,44 @@ class SettingsPages {
 public:
     static constexpr const char* CUSTOM = "custom";
 
-    static void register_all(SettingsRegistry& registry, const SettingsHooks& hooks, const LightingPresets& presets, const WaterPresets& water_presets) {
+    static void register_personal(SettingsRegistry& registry, const SettingsHooks& hooks, const LightingPresets& presets) {
         const LightingPresets* list = &presets;
-        const WaterPresets* waters = &water_presets;
+        registry.set_group(SettingsGroups::GAME);
         registry.add_tab(SettingsTabs::GENERAL, "General", "Display, camera, mouse and this menu", [hooks](SettingsPage& p) { general(p, hooks); });
         registry.add_tab(SettingsTabs::CONTROLS, "Controls", "Change, add or remove key bindings", controls);
-        registry.add_tab(SettingsTabs::CHARACTER, "Character", "Body size, movement speeds and the hand light", character);
-        registry.add_tab(SettingsTabs::PHYSICS, "Physics", "Gravity, air resistance and entity pushing", physics);
-        registry.add_tab(SettingsTabs::WATER, "Water", "Presets, how water flows, swimming and wading", [waters](SettingsPage& p) { water(p, *waters); });
-        registry.add_tab(SettingsTabs::TIME, "Time & Sky", "Day length, tick rate, sun path and sky colors", [hooks](SettingsPage& p) { time(p, hooks); });
-        registry.add_tab(SettingsTabs::CELESTIAL, "Sun, Moon & Stars", "Look, detail and light of the sun, moon and stars", celestial);
+        registry.add_tab(SettingsTabs::HUD, "HUD", "The debug panel and crosshair", hud);
+        registry.set_group(SettingsGroups::GRAPHICS);
         registry.add_tab(SettingsTabs::LIGHTING, "Lighting", "Presets, light engine, brightness and light sources", [list](SettingsPage& p) { lighting(p, *list); });
         registry.add_tab(SettingsTabs::SHADOWS, "Shadows", "Sun and lamp shadows", shadows);
         registry.add_tab(SettingsTabs::ATMOSPHERE, "Atmosphere", "Fog, hazy air and light rays", atmosphere);
         registry.add_tab(SettingsTabs::REFLECTIONS, "Reflections & Water", "Mirrors, water, glass and shine", reflections);
         registry.add_tab(SettingsTabs::RENDERING, "Rendering", "Distance, terrain detail, outline, player model and particles", rendering);
+        registry.set_group(SettingsGroups::PERFORMANCE);
         registry.add_tab(SettingsTabs::SIMULATION, "Simulation", "World loading, background work and timing limits", simulation);
-        registry.add_tab(SettingsTabs::HUD, "HUD", "The debug panel and crosshair", hud);
+        registry.end_group();
+    }
+
+    static void register_world(SettingsRegistry& registry, const SettingsHooks& hooks, const WaterPresets& water_presets) {
+        const WaterPresets* waters = &water_presets;
+        registry.set_group(SettingsGroups::GAMEPLAY);
+        registry.add_tab(SettingsTabs::CHARACTER, "Character", "Body size, movement speeds and the hand light", character);
+        registry.add_tab(SettingsTabs::PHYSICS, "Physics", "Gravity, air resistance and entity pushing", physics);
+        registry.add_tab(SettingsTabs::WATER, "Water", "Presets, how water flows, swimming and wading", [waters](SettingsPage& p) { water(p, *waters); });
+        registry.set_group(SettingsGroups::SKY);
+        registry.add_tab(SettingsTabs::TIME, "Time & Sky", "Day length, tick rate, sun path and sky colors", [hooks](SettingsPage& p) { time(p, hooks); });
+        registry.add_tab(SettingsTabs::CELESTIAL, "Sun, Moon & Stars", "Look, detail and light of the sun, moon and stars", celestial);
+        registry.add_tab(SettingsTabs::SEASONS, "Seasons", "Months, seasons, and how the sun and temperature change through the year", seasons);
+        registry.add_tab(SettingsTabs::WEATHER, "Weather", "Rain, snow, storms and temperature", weather);
+        registry.end_group();
+    }
+
+    static void register_all(SettingsRegistry& registry, const SettingsHooks& hooks, const LightingPresets& presets, const WaterPresets& water_presets) {
+        register_personal(registry, hooks, presets);
+        register_world(registry, hooks, water_presets);
     }
 
 private:
     static constexpr double BYTES_PER_MB = 1024.0 * 1024.0;
-    static constexpr double MIN_SECONDS  = 1e-6;
 
     static void mark_custom(SettingsPage& p) {
         GameSettings* g = &p.live();
@@ -100,7 +126,11 @@ private:
         p.color("Error color", "Color of error messages.", field(&GameSettings::menu, &MenuSettings::error));
         p.button("Save now", "Write the current settings to the settings file.", hooks.save);
         p.button("Load saved settings", "Throw away unsaved changes and load the settings file again.", hooks.reload);
-        p.button("Respawn", "Go back to the spawn point.", hooks.respawn);
+        if (hooks.respawn) p.button("Respawn", "Go back to the spawn point.", hooks.respawn);
+
+        p.header("Saving");
+        p.decimal("Autosave every", "How often the world saves itself while you play. 0 turns autosave off.", field(&GameSettings::saves, &SaveSettings::autosave_minutes), SaveLimits::autosave_minutes).unit("min").decimals(1);
+        if (hooks.save_world) p.button("Save world now", "Save every change to this world right away.", hooks.save_world);
     }
 
     static void controls(SettingsPage& p) {
@@ -131,6 +161,9 @@ private:
         p.header("Body").applies(Apply::Character);
         p.decimal("Width", "How wide the player is.", c(&C::width), CL::width).unit("blocks");
         p.decimal("Reach", "How far away you can target blocks.", c(&C::reach), CL::reach).unit("blocks").decimals(1);
+        p.applies(Apply::Character | Apply::Physics);
+        p.decimal("Body mass", "How heavy you are. Heavier bodies are slowed less by water and, with displacement by weight, push aside more water.", c(&C::mass), CL::mass).unit("kg").decimals(1);
+        p.applies(Apply::Character);
         p.decimal("Standing height", "Height while standing.", c(&C::standing_height), CL::standing_height).unit("blocks");
         p.decimal("Crouching height", "Height while crouching.", c(&C::crouching_height), CL::crouching_height).unit("blocks");
         p.decimal("Crawling height", "Height while crawling.", c(&C::crawling_height), CL::crawling_height).unit("blocks");
@@ -258,8 +291,39 @@ private:
         p.integer("Drop search", "How far water looks for an edge or hole to run toward. Higher drains wider areas but uses more processing.", w(&W::drop_search), WL::drop_search).unit("blocks");
         p.when([g] { return g->water.flow == FlowModel::Realistic; });
         p.toggle("Displacement", "Players and other entities push water out of the way, so the water rises around them.", w(&W::displacement));
+        p.when([g] { return g->water.flow == FlowModel::Realistic && g->water.displacement; });
+        p.choice("Displaced by", "Weight pushes aside as much water as the body weighs, like real floating and sinking. Body size pushes aside everything the body takes up.",
+                 w(&W::displace_by), { "Weight", "Body size" });
+        p.when([g] { return g->water.flow == FlowModel::Realistic; });
+        p.toggle("Splashing", "Water that falls a long way splashes when it lands, throwing some water sideways and even over low walls.", w(&W::splashes));
+        p.when([g] { return g->water.flow == FlowModel::Realistic && g->water.splashes; });
+        p.decimal("Splash strength", "How much water a hard landing throws around. 1 is normal.", w(&W::splash), WL::splash).unit("x");
         p.when([g] { return g->water.flow != FlowModel::Still; });
         p.integer("Updates per step", "Most water blocks updated in one step. Lower protects the frame rate during big floods.", w(&W::updates), WL::updates);
+
+        using WV  = WaveSettings;
+        using WVL = WaveLimits;
+        auto wave = [](auto WV::*m) { return field(&GameSettings::water, &W::waves, m); };
+        p.always().header("Waves");
+        p.when([g] { return g->water.flow == FlowModel::Realistic; });
+        p.toggle("Waves", "Real waves that move the water surface, bob you up and down and grow in storms. Oceans get the biggest waves, small lakes and rivers much smaller ones.", wave(&WV::enabled));
+        p.when([g] { return g->water.flow == FlowModel::Realistic && g->water.waves.enabled; });
+        p.decimal("Calm wave height", "How tall waves are on a calm day.", wave(&WV::calm_height), WVL::height).unit("blocks").decimals(2);
+        p.decimal("Storm wave height", "How tall waves get in a strong storm.", wave(&WV::storm_height), WVL::height).unit("blocks").decimals(2);
+        p.decimal("Wave length", "Distance from one wave to the next.", wave(&WV::wavelength), WVL::wavelength).unit("blocks").decimals(1);
+        p.decimal("Wave speed", "How fast waves travel. 1 is like real water.", wave(&WV::speed), WVL::speed).unit("x");
+        p.toggle("Waves wash over walls", "Big waves spill water over low walls and onto the shore, so storms can fill a boat.", wave(&WV::overtop));
+        p.when([g] { return g->water.flow == FlowModel::Realistic && g->water.waves.enabled && g->water.waves.overtop; });
+        p.decimal("Wash amount", "How much water a wave spills over a wall. 1 is normal.", wave(&WV::overtop_rate), WVL::overtop_rate).unit("x");
+
+        p.always().header("Rain and floods");
+        p.when([g] { return g->water.flow == FlowModel::Realistic; });
+        p.toggle("Rain fills water", "Rain adds real water: puddles form, rivers and lakes rise and heavy rain can flood low ground.", w(&W::rain_fills));
+        p.when([g] { return g->water.flow == FlowModel::Realistic && g->water.rain_fills; });
+        p.decimal("Rain to water", "How much water heavy rain adds per game hour.", w(&W::rain_fill), WL::rain_fill).unit("blocks/h").decimals(3);
+        p.decimal("Soaking in", "How fast puddles on the ground soak away.", w(&W::soak), WL::soak).unit("blocks/h").decimals(3);
+        p.decimal("Drying", "How fast shallow water above sea level dries up when it is not raining, so floods go down again.", w(&W::evaporation), WL::evaporation).unit("blocks/h").decimals(3);
+        p.decimal("Rain reach", "How far around you rain adds water.", w(&W::rain_reach), WL::rain_reach).unit("blocks");
 
         p.always().header("Resistance");
 
@@ -273,7 +337,6 @@ private:
         p.when([g] { return g->water.resistance == FluidModel::Quadratic; });
         p.decimal("Water density", "Heavier fluids slow you more.", w(&W::fluid_density), WL::fluid_density).unit("kg/m3").decimals(1);
         p.decimal("Drag coefficient", "How much your body shape resists water.", w(&W::drag_coefficient), WL::drag_coefficient);
-        p.decimal("Body mass", "Heavier bodies are slowed less.", w(&W::body_mass), WL::body_mass).unit("kg").decimals(1);
         p.when([g] { return g->water.resistance == FluidModel::Linear; });
         p.decimal("Linear drag", "Fraction of extra speed lost per second.", w(&W::linear_drag), WL::linear_drag).unit("/s");
         p.when([g] { return g->water.resistance == FluidModel::TickDamping; });
@@ -289,95 +352,44 @@ private:
         p.decimal("Depth that stops a fall", "Water this deep cancels a fall completely. Shallower water cancels part of it.", w(&W::fall_break_depth), WL::fall_break_depth).unit("blocks").decimals(1);
     }
 
-    template <typename Seconds>
-    static SettingsPage& linked_ticks(SettingsPage& p, const std::string& label, const std::string& description, bool whole, Seconds seconds) {
-        GameSettings* g = &p.live();
-        GameSettings* base = &p.base_settings();
-        const Bounds widest{ 0.0, SimulationLimits::tick_rate.max * DayCycleLimits::real_day_minutes.max * DayCycleSettings::REAL_SECONDS_PER_MINUTE };
-        auto get = [g, seconds] { return g->simulation.tick_rate * seconds(*g); };
-        auto set = [g, seconds](double ticks) { g->simulation.tick_rate = SimulationLimits::tick_rate.clamp(ticks / vmax(seconds(*g), MIN_SECONDS)); };
-        
-        if (whole) p.custom_integer(label, description, get, set, widest);
-        else p.custom_decimal(label, description, get, set, widest);
-
-        return p.transient()
-                .live_limits([g, seconds] { return Bounds{ SimulationLimits::tick_rate.min * seconds(*g), SimulationLimits::tick_rate.max * seconds(*g) }; })
-                .defaults([g, base] { g->simulation.tick_rate = base->simulation.tick_rate; }, [g, base] { return g->simulation.tick_rate == base->simulation.tick_rate; })
-                .logarithmic();
-    }
-
     static void time(SettingsPage& p, const SettingsHooks& hooks) {
         using D  = DayCycleSettings;
         using DL = DayCycleLimits;
         using SL = SimulationLimits;
         using LL = LightingLimits;
-        GameSettings* g = &p.live();
         auto d = [](auto D::*m) { return field(&GameSettings::day_cycle, m); };
         auto sim = [](auto SimulationSettings::*m) { return field(&GameSettings::simulation, m); };
         auto l = [](double LightingSettings::*m) { return field(&GameSettings::lighting, m); };
  
         p.header("Time").applies(Apply::Nothing);
         p.toggle("Day cycle", "Let time pass. Turn off to freeze the time of day.", d(&D::enabled));
-        
-        p.custom_decimal(
-            "Time of day", 
-            "Set the current time.", 
-            hooks.hour, 
-            hooks.set_hour, 
-            { 0.0, DL::hours_per_day.max }
-        ).unit("h").transient().live_limits([g] { return Bounds{ 0.0, g->day_cycle.hours_per_day }; });
-        
+
+        if (hooks.hour && hooks.set_hour) {
+            p.custom_decimal(
+                "Time of day",
+                "Set the current time.",
+                hooks.hour,
+                hooks.set_hour,
+                { 0.0, D::HOURS_PER_DAY }
+            ).unit("h").transient();
+        }
+
         p.decimal(
             "Real day length", 
-            "How long one full day lasts in real minutes at normal game speed. Changing ticks per second never changes this.",
+            "How long one full day lasts in real minutes at normal game speed. Ticks per second never changes this.",
             d(&D::real_day_minutes), 
             DL::real_day_minutes
         ).unit("min").decimals(1).logarithmic();
 
-        p.integer("Hours per day", "How many hours the clock shows in one day. Only changes the clock, not how long a day lasts.", d(&D::hours_per_day), DL::hours_per_day).unit("h");
-        p.integer("Minutes per hour", "How many minutes the clock shows in one hour. Only changes the clock, not how long a day lasts.", d(&D::minutes_per_hour), DL::minutes_per_hour).unit("min");
-        p.integer("Seconds per minute", "How many seconds the clock shows in one minute. Only changes the clock, not how long a day lasts.", d(&D::seconds_per_minute), DL::seconds_per_minute).unit("s");
- 
         p.header("Ticks");
 
         p.decimal(
             "Ticks per second", 
-            "Simulation ticks per real second. Higher is smoother physics. The day keeps the same real length.",
+            "Simulation ticks per real second. Higher gives smoother, more precise physics, water and entities. It never changes how long a day lasts.",
             sim(&SimulationSettings::tick_rate), 
             SL::tick_rate
         ).unit("ticks/s").logarithmic();
 
-        linked_ticks(
-            p, 
-            "Ticks per day", 
-            "Ticks in one full day. Changing it changes ticks per second, so the day keeps the same real length.", 
-            true,
-            [](const GameSettings& s) { return s.day_cycle.real_day_seconds(); }
-        ).unit("ticks");
-        linked_ticks(
-            p, 
-            "Ticks per hour", 
-            "Ticks in one clock hour. Changing it changes ticks per second, so the day keeps the same real length.", 
-            false,
-            [](const GameSettings& s) { return s.day_cycle.real_day_seconds() / s.day_cycle.hours_per_day; }
-        ).unit("ticks").decimals(2);
-
-        linked_ticks(
-            p, 
-            "Ticks per minute", 
-            "Ticks in one clock minute. Changing it changes ticks per second, so the day keeps the same real length.", 
-            false,
-            [](const GameSettings& s) { return s.day_cycle.real_day_seconds() / s.day_cycle.minutes_per_day(); }
-        ).unit("ticks").decimals(2);
-
-        linked_ticks(
-            p, 
-            "Ticks per clock second", 
-            "Ticks in one clock second. Changing it changes ticks per second, so the day keeps the same real length.", 
-            false,
-            [](const GameSettings& s) { return s.day_cycle.real_day_seconds() / s.day_cycle.seconds_per_day(); }
-        ).unit("ticks").decimals(3);
-        
         p.decimal("Game speed", "Speeds up or slows down everything: movement, physics and time.", sim(&SimulationSettings::game_speed), SL::game_speed).unit("x").logarithmic();
         p.integer("Max ticks per frame", "Limit on catch-up ticks after a slow frame. Raise it with high tick rates.", sim(&SimulationSettings::max_ticks_per_frame), SL::max_ticks_per_frame);
  
@@ -408,6 +420,99 @@ private:
         p.color("Night sky light", "Tint of sky light at night.", d(&D::night_light_tint));
         p.applies(Apply::Nothing);
         p.color("Sky without lighting", "Background color used when lighting is off.", field(&GameSettings::render, &RenderSettings::sky_color));
+    }
+
+    static void seasons(SettingsPage& p) {
+        using S  = SeasonSettings;
+        using SL = SeasonLimits;
+        GameSettings* g = &p.live();
+        auto se = [](auto S::*m) { return field(&GameSettings::seasons, m); };
+        const std::vector<std::string> names(Seasons::NAMES.begin(), Seasons::NAMES.end());
+
+        p.header("Seasons");
+        p.choice("Seasons", "Change through the year, stay in one season forever, or have no seasons at all like Minecraft.", se(&S::mode),
+                 { "Change through the year", "Always one season", "Off" });
+        p.when([g] { return g->seasons.mode == SeasonMode::Fixed; });
+        p.choice("Season", "The season the world always stays in.", se(&S::fixed_season), names);
+        p.when([g] { return g->seasons.mode == SeasonMode::Cycle; });
+        p.choice("Starting season", "The season a new world starts in.", se(&S::start_season), names);
+
+        p.always().header("Calendar");
+        p.integer("Days per month", "How many game days are in one month.", se(&S::days_per_month), SL::days_per_month).unit("days").logarithmic();
+        p.integer("Months per season", "How many months each season lasts. A year has four seasons.", se(&S::months_per_season), SL::months_per_season).unit("months");
+
+        p.header("Sun and temperature");
+        p.when([g] { return g->seasons.mode != SeasonMode::Off; });
+        p.decimal("Sun height change", "How much higher the sun climbs in summer and lower in winter. This also makes summer days longer and winter nights longer, more so with more sun tilt.",
+                  se(&S::sun_swing), SL::sun_swing).unit("deg").decimals(1);
+        p.decimal("Season temperature", "How much warmer summer is and colder winter is. 1 is normal, 0 keeps the same temperature all year.", se(&S::temperature), SL::temperature).unit("x");
+        p.always();
+    }
+
+    static void weather(SettingsPage& p) {
+        using W  = WeatherSettings;
+        using WL = WeatherLimits;
+        using T  = TemperatureSettings;
+        using TL = TemperatureLimits;
+        GameSettings* g = &p.live();
+        auto w = [](auto W::*m) { return field(&GameSettings::weather, m); };
+        auto t = [](auto T::*m) { return field(&GameSettings::weather, &W::temperature, m); };
+
+        p.header("Weather");
+        p.choice("Weather", "Let the weather change by itself, or keep it the same forever.", w(&W::mode), { "Changes over time", "Always clear", "Always raining", "Always stormy" });
+        p.choice("Kinds of rain", "Realistic picks rain, sleet, freezing rain, snow or hail from the temperature. Simple only has rain or snow, like Minecraft.",
+                 w(&W::style), { "Realistic", "Simple" });
+        p.when([g] { return g->weather.mode == WeatherMode::Changing; });
+        p.decimal("Clear spells", "Average time between rain or snow.", w(&W::clear_days), WL::clear_days).unit("days").logarithmic();
+        p.decimal("Rain spells", "Average time rain or snow lasts.", w(&W::rain_days), WL::rain_days).unit("days").logarithmic();
+        p.decimal("Storm chance", "Chance that rain comes as a thunderstorm.", w(&W::storm_chance), WL::chance);
+        p.always();
+        p.decimal("Hail chance", "Chance that a warm storm brings hail.", w(&W::hail_chance), WL::chance);
+        p.decimal("Rainy biome showers", "Extra showers in biomes with more rain than normal, like jungles and swamps, even when the rest of the world is dry. 0 turns them off.", w(&W::showers), WL::showers).unit("x");
+        p.decimal("Shower length", "About how long each shower lasts.", w(&W::shower_hours), WL::shower_hours).unit("h").decimals(1);
+        p.decimal("Change speed", "How long the weather takes to clear up or set in.", w(&W::change_hours), WL::change_hours).unit("h").decimals(1);
+
+        p.header("Rain through the year");
+        p.when([g] { return g->weather.mode == WeatherMode::Changing && g->seasons.mode != SeasonMode::Off; });
+
+        for (std::size_t i = 0; i < WeatherSettings::SEASON_COUNT; ++i) {
+            const std::string name = Seasons::NAMES[i];
+            p.custom_decimal(name, "How often it rains or snows in " + name + ". 1 is normal, 2 is about twice as often.",
+                [g, i] { return g->weather.season_rain[i]; },
+                [g, i](double v) { g->weather.season_rain[i] = v; },
+                WL::season_rain
+            ).unit("x").defaults(
+                [g, i] { g->weather.season_rain[i] = WeatherSettings{}.season_rain[i]; },
+                [g, i] { return g->weather.season_rain[i] == WeatherSettings{}.season_rain[i]; }
+            );
+        }
+
+        p.always().header("Rain, snow and ice");
+        p.decimal("Snow below", "Rain turns to snow at or below this temperature.", w(&W::snow_below), WL::threshold).unit("C").decimals(1);
+        p.when([g] { return g->weather.style == RainStyle::Realistic; });
+        p.decimal("Sleet below", "Between freezing and this temperature, rain falls as sleet. Just below freezing it falls as freezing rain.", w(&W::sleet_below), WL::threshold).unit("C").decimals(1);
+        p.decimal("Hail above", "Storms can only bring hail at or above this temperature.", w(&W::hail_above), WL::threshold).unit("C").decimals(1);
+        p.always();
+        p.decimal("Dry biomes", "Biomes with less rain than this only get clouds, never rain or snow. Deserts are dry by default.", w(&W::dry_below), WL::dry_below);
+
+        p.header("Look");
+        p.decimal("Cloud darkness", "How much clouds dim the sun.", w(&W::darkening), WL::darkening);
+        p.decimal("Storm darkness", "How much storm clouds dim the sun.", w(&W::storm_darkening), WL::darkening);
+        p.decimal("Rain fog", "How much thicker fog gets in rain and snow.", w(&W::fog), WL::fog).unit("x");
+        p.decimal("Wind", "How hard the wind blows rain and snow sideways and how choppy water gets.", w(&W::wind), WL::wind).unit("x");
+        p.toggle("Lightning", "Storms have lightning.", w(&W::lightning));
+        p.when([g] { return g->weather.lightning; });
+        p.decimal("Lightning rate", "Average lightning strikes per game hour in a strong storm.", w(&W::lightning_rate), WL::lightning_rate).unit("per h").decimals(1);
+
+        p.always().header("Temperature");
+        p.toggle("Changes during the day", "Days are warmer than nights. Each biome has its own swing, so deserts get hot days and cold nights.", t(&T::daily_change));
+        p.when([g] { return g->weather.temperature.daily_change; });
+        p.decimal("Day and night swing", "How big the difference between day and night is. 1 is normal.", t(&T::daily_strength), TL::daily_strength).unit("x");
+        p.decimal("Clouds even it out", "How much clouds shrink the difference between day and night.", t(&T::cloud_damping), TL::cloud_damping);
+        p.always();
+        p.decimal("Cooling with height", "How much colder it gets for every 10 blocks above sea level, so tall peaks are freezing.", t(&T::altitude_drop), TL::altitude_drop).unit("C").decimals(2);
+        p.decimal("Rain cooling", "How much colder it gets in heavy rain or snow.", t(&T::weather_cooling), TL::weather_cooling).unit("C").decimals(1);
+        p.decimal("Warmer or colder", "Makes the whole world warmer or colder.", t(&T::offset), TL::offset).unit("C").decimals(1);
     }
 
     static void celestial(SettingsPage& p) {
@@ -743,6 +848,8 @@ private:
 
         p.header("Terrain").applies(Apply::Terrain);
         p.toggle("Merge faces", "Join matching block faces into bigger pieces. Much faster.", r(&R::merge_faces));
+        p.integer("Wave detail distance", "How far around you the water surface really moves with the waves. Farther water still shows waves in its lighting. Lower is faster, 0 keeps all water flat.",
+                  r(&R::wave_detail), RL::wave_detail).unit("chunks");
         p.toggle("Skip hidden floor", "Don't draw the bottom of the world that can never be seen.", r(&R::cull_void_faces));
         p.decimal("Top brightness", "Brightness of block tops before lighting.", shade(&FaceShadingSettings::up), FL::up);
         p.decimal("Bottom brightness", "Brightness of block bottoms.", shade(&FaceShadingSettings::down), FL::down);
@@ -780,6 +887,18 @@ private:
         p.integer("Max particles", "Most particles alive at once.", pa(&ParticleSettings::max_particles), PL::max_particles);
         p.integer("Spawn distance", "Emitters farther than this don't spawn particles.", pa(&ParticleSettings::emit_distance), PL::emit_distance).unit("blocks");
         p.integer("Draw distance", "Particles farther than this aren't drawn.", pa(&ParticleSettings::draw_distance), PL::draw_distance).unit("blocks");
+
+        using V  = WeatherViewSettings;
+        using VL = WeatherViewLimits;
+        auto wv = [](auto V::*m) { return field(&GameSettings::weather_view, m); };
+        p.always().header("Weather").applies(Apply::Nothing);
+        p.toggle("Rain and snow", "Draw falling rain, snow, sleet and hail.", wv(&V::precipitation));
+        p.when([g] { return g->weather_view.precipitation; });
+        p.decimal("Amount", "How many drops and flakes are drawn. 1 is normal.", wv(&V::amount), VL::amount).unit("x");
+        p.integer("Most drops", "The most drops and flakes drawn at once.", wv(&V::max_drops), VL::max_drops).logarithmic();
+        p.decimal("Reach", "How far around you rain and snow are drawn.", wv(&V::radius), VL::radius).unit("blocks").decimals(1);
+        p.always();
+        p.toggle("Lightning flashes", "Light up the sky when lightning strikes. Turn off if flashing light bothers you.", wv(&V::flashes));
     }
 
     static void simulation(SettingsPage& p) {
@@ -826,6 +945,8 @@ private:
         p.toggle("World section", "Seed, time and loaded world.", sec(&HudSections::world));
         p.toggle("Rendering section", "Chunks, quads and reflections.", sec(&HudSections::rendering));
         p.toggle("Lighting section", "Lights, light data and the light where you stand.", sec(&HudSections::lighting));
+
+        p.choice("Temperature unit", "Show temperatures in Celsius or Fahrenheit.", field(&GameSettings::weather_view, &WeatherViewSettings::unit), { "Celsius", "Fahrenheit" });
 
         p.header("Layout");
         p.choice("Corner", "Which corner the panel sits in.", h(&H::corner), { "Top left", "Top right", "Bottom left", "Bottom right" });

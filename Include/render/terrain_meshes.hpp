@@ -21,10 +21,14 @@ struct ChunkRenderEntry {
     fizmo::graphics::MeshHandle3D  translucent;
     std::unique_ptr<ChunkMeshData> pending;
     ChunkConnectivity              connectivity;
-    std::size_t                    faces = 0, quads = 0, translucent_quads = 0, cpu_bytes = 0;
+    std::size_t                    faces          = 0, quads = 0, translucent_quads = 0, cpu_bytes = 0;
     std::uint64_t                  built_revision = 0;
-    bool                           meshed = false;
-    bool                           in_flight = false;
+    std::uint64_t                  opaque_hash    = 0;
+    bool                           meshed         = false;
+    bool                           sunlit         = true;
+    bool                           fluid_tops     = false;
+    bool                           split          = false;
+    bool                           in_flight      = false;
 };
 
 struct LodTileEntry {
@@ -55,6 +59,8 @@ struct TerrainStats {
     std::size_t   cpu_mesh_bytes    = 0;
     std::uint64_t gpu_mesh_bytes    = 0;
     std::size_t   cave_visited      = 0;
+    std::size_t   uploads           = 0;
+    std::size_t   reused            = 0;
 };
 
 struct TerrainColumn {
@@ -86,6 +92,8 @@ public:
         next.occlusion_step    = lighting.occlusion_step;
         next.shading.factors   = render.shading;
         next.shading.strength  = lighting.face_shading;
+        next.water             = m_mesh_options.water;
+        next.waves             = m_mesh_options.waves;
         const bool changed = next != m_mesh_options;
         m_mesh_options = next;
         m_streaming = streaming;
@@ -98,6 +106,21 @@ public:
     const LodSelection& selection() const noexcept { return m_selection; }
     const ChunkMap&     chunks()    const noexcept { return m_chunks; }
     const TileMap&      tiles()     const noexcept { return m_tiles; }
+
+    void set_wave_detail(int chunks) {
+        if (chunks == m_wave_detail) return;
+        m_wave_detail = chunks;
+        m_wave_dirty = true;
+    }
+
+    int wave_detail() const noexcept { return m_wave_detail; }
+
+    void set_water(WaterLookPtr water, bool waves) {
+        if (water == m_mesh_options.water && waves == m_mesh_options.waves) return;
+        m_mesh_options.water = std::move(water);
+        m_mesh_options.waves = waves;
+        remesh_all();
+    }
 
     void remesh_all() {
         for (const auto& kv : m_chunks) want(kv.first);
@@ -132,6 +155,7 @@ public:
 
     void update(const vector3d& camera) {
         m_camera = camera;
+        refresh_waves();
         handle_column_events();
         handle_changes();
         schedule_meshes();
@@ -161,10 +185,18 @@ public:
             entry.translucent_quads = data->translucent.quad_count();
             entry.cpu_bytes         = keeps_ram ? data->quads.memory_bytes() + data->translucent.memory_bytes() : 0;
             entry.built_revision    = data->revision;
-            entry.opaque      = data->quads.empty()       ? fizmo::graphics::MeshHandle3D() : renderer.upload_quads(std::move(data->quads));
+            entry.fluid_tops        = data->fluid_tops;
+            entry.split             = data->split;
+            entry.sunlit            = data->sunlit;
+            const bool same = !data->quads.empty() && entry.opaque.valid() && !entry.opaque.lost() && entry.opaque_hash == data->opaque_hash;
+            entry.opaque_hash       = data->opaque_hash;
+            if (!same) entry.opaque = data->quads.empty() ? fizmo::graphics::MeshHandle3D() : renderer.upload_quads(std::move(data->quads));
+            ++m_uploads;
+            if (same) ++m_reused;
             entry.translucent = data->translucent.empty() ? fizmo::graphics::MeshHandle3D() : renderer.upload_quads(std::move(data->translucent));
             entry.meshed = true;
             count(entry);
+            if (entry.fluid_tops && m_mesh_options.waves && entry.split != wave_detailed(data->pos)) want(data->pos);
             if (old.bits != entry.connectivity.bits) m_cave_dirty = true;
         }
 
@@ -274,6 +306,8 @@ public:
         s.cpu_mesh_bytes += m_pending_bytes;
         s.gpu_mesh_bytes  = m_gpu_bytes;
         s.cave_visited    = m_cave.visited();
+        s.uploads         = m_uploads;
+        s.reused          = m_reused;
         return s;
     }
 
@@ -389,6 +423,29 @@ private:
         return true;
     }
 
+    ColumnPos camera_column() const noexcept {
+        return { floor_div(static_cast<int>(std::floor(m_camera.x)), Chunk::SIZE), floor_div(static_cast<int>(std::floor(m_camera.y)), Chunk::SIZE) };
+    }
+
+    bool wave_detailed(const ChunkPos& p) const noexcept {
+        if (m_wave_detail <= 0) return false;
+        const ColumnPos c = camera_column();
+        return vmax(std::abs(p.x - c.x), std::abs(p.y - c.y)) <= m_wave_detail;
+    }
+
+    void refresh_waves() {
+        if (!m_mesh_options.waves) return;
+        const ColumnPos c = camera_column();
+        if (!m_wave_dirty && c.x == m_wave_center.x && c.y == m_wave_center.y) return;
+        m_wave_center = c;
+        m_wave_dirty = false;
+
+        for (const auto& kv : m_chunks) {
+            const ChunkRenderEntry& e = kv.second;
+            if (e.meshed && e.fluid_tops && e.split != wave_detailed(kv.first)) want(kv.first);
+        }
+    }
+
     double chunk_distance_sq(const ChunkPos& p) const noexcept {
         const double dx = (p.x + 0.5) * Chunk::SIZE - m_camera.x;
         const double dy = (p.y + 0.5) * Chunk::SIZE - m_camera.y;
@@ -433,7 +490,8 @@ private:
         ++m_mesh_jobs;
         auto snap = ChunkSnapshot::capture(m_world, *chunk);
         const BlockRegistry* reg = &m_world.blocks();
-        const ChunkMeshOptions options = m_mesh_options;
+        ChunkMeshOptions options = m_mesh_options;
+        options.split_tops = options.water && options.waves && wave_detailed(p);
         JobSystem* jobs = &m_jobs;
 
         m_jobs.submit([this, jobs, reg, options, snap = std::move(snap)]() mutable {
@@ -638,6 +696,9 @@ private:
     LodLayout             m_layout;
     LodSelection          m_selection;
     vector3d              m_camera{};
+    ColumnPos             m_wave_center{};
+    int                   m_wave_detail = 2;
+    bool                  m_wave_dirty = true;
 
     ChunkMap              m_chunks;
     TileMap               m_tiles;
@@ -660,6 +721,8 @@ private:
     std::size_t             m_pending_uploads = 0;
     std::size_t             m_pending_bytes = 0;
     std::uint64_t           m_gpu_bytes = 0;
+    std::size_t             m_uploads = 0;
+    std::size_t             m_reused = 0;
 
     CaveCulling             m_cave;
     ChunkPos                m_cave_chunk{ 0, 0, std::numeric_limits<int>::min() };

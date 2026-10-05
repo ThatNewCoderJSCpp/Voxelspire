@@ -36,7 +36,7 @@ struct Apply {
     static constexpr std::uint32_t Everything  = ~0u;
 };
 
-enum class ControlKind : std::uint8_t { Header = 0, Toggle, Integer, Decimal, Choice, Color, Binding, Button };
+enum class ControlKind : std::uint8_t { Header = 0, Toggle, Integer, Decimal, Choice, Color, Binding, Button, Text };
 
 struct NumberFormat {
     static constexpr int DEFAULT_DECIMALS = 2;
@@ -76,6 +76,10 @@ struct SettingControl {
     std::function<Color()>      default_color;
     bool                        with_alpha = false;
 
+    std::function<std::string()>      get_text;
+    std::function<void(std::string)>  set_text;
+    std::size_t                       max_length = 0;
+
     Action                      action = Action::MoveForward;
     InputBindings*              bindings = nullptr;
     std::function<void()>       press;
@@ -108,6 +112,7 @@ struct SettingsTab {
     std::string                 name;
     std::string                 summary;
     std::vector<SettingControl> controls;
+    std::string                 group;
 };
 
 struct NumberCheck {
@@ -260,6 +265,18 @@ public:
         return add(std::move(c));
     }
 
+    SettingsPage& custom_toggle(
+        const std::string& label,
+        const std::string& description,
+        std::function<bool()> get,
+        std::function<void(bool)> set
+    ) {
+        SettingControl c = base(ControlKind::Toggle, label, description);
+        c.get_bool = std::move(get);
+        c.set_bool = std::move(set);
+        return add(std::move(c));
+    }
+
     template <typename S>
     SettingsPage& integer(const std::string& label, const std::string& description, S source, Bounds limits) {
         return number(ControlKind::Integer, label, description, slot(source), limits);
@@ -348,6 +365,18 @@ public:
         const Action a = info.action;
         c.reset      = [live, defaults, a] { live->bind(a, defaults->keys(a)); };
         c.is_default = [live, defaults, a] { return live->keys(a) == defaults->keys(a); };
+        return add(std::move(c));
+    }
+
+    template <typename S>
+    SettingsPage& text(const std::string& label, const std::string& description, S source, std::size_t max_length) {
+        SettingControl c = base(ControlKind::Text, label, description);
+        const auto s = slot(source);
+        c.max_length = max_length;
+        c.get_text   = [s] { return s.get(); };
+        c.set_text   = [s](std::string v) { s.get() = std::move(v); };
+        c.reset      = [s] { s.get() = s.fallback(); };
+        c.is_default = [s] { return s.get() == s.fallback(); };
         return add(std::move(c));
     }
 
@@ -459,6 +488,7 @@ private:
         if (c.set_number) c.set_number = [get = c.get_number, set = c.set_number, touch](double v) { const double before = get(); set(v); if (get() != before) touch(); };
         if (c.set_choice) c.set_choice = [get = c.get_choice, set = c.set_choice, touch](int v) { if (get() == v) return; set(v); touch(); };
         if (c.set_color)  c.set_color  = [get = c.get_color, set = c.set_color, touch](Color v) { if (get() == v) return; set(v); touch(); };
+        if (c.set_text)   c.set_text   = [get = c.get_text, set = c.set_text, touch](std::string v) { if (get() == v) return; set(std::move(v)); touch(); };
         if (c.reset)      c.reset      = [same = c.is_default, set = c.reset, touch] { if (same && same()) return; set(); touch(); };
     }
 

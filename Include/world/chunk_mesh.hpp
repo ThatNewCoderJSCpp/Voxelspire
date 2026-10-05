@@ -6,6 +6,7 @@
 #include <cstring>
 #include <memory>
 #include <vector>
+#include "../physics/waves.hpp"
 #include "../render/greedy_mesher.hpp"
 #include "world.hpp"
 #include <cmath>
@@ -178,15 +179,18 @@ struct ChunkConnectivity {
 };
 
 struct ChunkMeshOptions {
-    bool        merge_faces       = true;
-    bool        cull_void_faces   = true;
-    bool        smooth_lighting   = true;
-    double      ambient_occlusion = 1.0;
-    double      occlusion_step    = 0.2;
-    FaceShading shading;
+    bool          merge_faces       = true;
+    bool          cull_void_faces   = true;
+    bool          smooth_lighting   = true;
+    double        ambient_occlusion = 1.0;
+    double        occlusion_step    = 0.2;
+    FaceShading   shading;
+    WaterLookPtr  water;
+    bool          waves             = false;
+    bool          split_tops        = false;
 
     bool operator==(const ChunkMeshOptions& o) const noexcept {
-        return merge_faces == o.merge_faces && cull_void_faces == o.cull_void_faces && smooth_lighting == o.smooth_lighting
+        return merge_faces == o.merge_faces && water == o.water && waves == o.waves && cull_void_faces == o.cull_void_faces && smooth_lighting == o.smooth_lighting
             && ambient_occlusion == o.ambient_occlusion && occlusion_step == o.occlusion_step
             && shading.strength == o.shading.strength && shading.factors.up == o.shading.factors.up
             && shading.factors.down == o.shading.factors.down && shading.factors.north_south == o.shading.factors.north_south
@@ -203,6 +207,10 @@ struct ChunkMeshData {
     fizmo::graphics::QuadMesh3D translucent;
     std::size_t                 faces = 0;
     ChunkConnectivity           connectivity;
+    bool                        fluid_tops  = false;
+    bool                        split       = false;
+    bool                        sunlit      = true;
+    std::uint64_t               opaque_hash = 0;
 };
 
 class ChunkMesher {
@@ -213,6 +221,8 @@ public:
         ChunkMeshData out;
         out.pos = snap.pos;
         out.revision = snap.revision;
+        out.split = options.split_tops;
+        bool water_ready = false;
         const int dims[3] = { Chunk::SIZE, Chunk::SIZE, Chunk::SIZE };
         const BlockPos origin = snap.origin();
         const vector3d zero{ 0.0, 0.0, 0.0 }, unit{ 1.0, 1.0, 1.0 };
@@ -230,6 +240,7 @@ public:
             FluidSurface surface;
 
             if (t.fluid) {
+                if (f == Face::Up && options.split_tops) return cell;
                 surface = fluid_surface(snap, traits, id, x, y, z);
                 if (surface.lowered && f != Face::Down && (f != Face::Up || !surface.flat)) return cell;
             }
@@ -241,6 +252,18 @@ public:
             if (f == Face::Down && options.cull_void_faces && snap.has_floor && origin.z + z == snap.floor[ChunkColumn::cell(x, y)]) return cell;
             cell.key = face_key(id, f, options.shading);
             if (t.fluid && f == Face::Up) cell.key = FaceKey::with_surface(cell.key, surface.lowered ? surface.height[0] : 1.0, surface.flow);
+
+            if (t.fluid && options.water) {
+                fill_water(snap, options, water_ready);
+                const WaterSample look = water_at(x + HALF_CELL, y + HALF_CELL);
+                cell.key = FaceKey::with_color(cell.key, quantized(look.tint, FaceKey::color(cell.key).alpha()));
+
+                if (f == Face::Up) {
+                    out.fluid_tops = true;
+                    if (options.waves) cell.key |= static_cast<std::uint64_t>(fizmo::graphics::compact_swell(look.waves)) << FaceKey::FLAGS_SHIFT;
+                }
+            }
+
             const std::uint8_t shade = FaceKey::shade(cell.key);
             const std::uint16_t flat = snap.light_at(ax, ay, az);
 
@@ -273,16 +296,49 @@ public:
         });
 
         out.faces += emit_shaped(snap, options, traits, out);
-        out.faces += emit_fluids(snap, options, traits, out);
+        out.faces += emit_fluids(snap, options, traits, out, water_ready);
         out.quads.finalize();
         out.translucent.finalize();
         out.connectivity = ChunkConnectivity::compute(snap, m_registry);
+        out.sunlit       = reaches_sky(snap);
+        out.opaque_hash  = hash_of(out.quads);
         return out;
     }
 
 private:
-    static constexpr int    OCCLUSION_LEVELS = 4;
-    static constexpr double CELL_MIDPOINT    = 0.5;
+    static bool reaches_sky(const ChunkSnapshot& snap) noexcept {
+        if (!snap.has_light) return true;
+        for (const std::uint16_t l : snap.light) if (PackedLight::sky(l) > 0) return true;
+        return false;
+    }
+
+    static std::uint64_t hash_of(const fizmo::graphics::QuadMesh3D& mesh) noexcept {
+        const auto& v = mesh.vertices();
+        const unsigned char* bytes = reinterpret_cast<const unsigned char*>(v.data());
+        const std::size_t size = v.size() * sizeof(v.front());
+        std::uint64_t h = HASH_SEED ^ size;
+        std::size_t i = 0;
+
+        for (; i + sizeof(std::uint64_t) <= size; i += sizeof(std::uint64_t)) {
+            std::uint64_t word = 0;
+            std::memcpy(&word, bytes + i, sizeof(word));
+            h = (h ^ word) * HASH_PRIME;
+            h ^= h >> HASH_SHIFT;
+        }
+
+        for (; i < size; ++i) h = (h ^ bytes[i]) * HASH_PRIME;
+        return h;
+    }
+
+    static constexpr std::uint64_t HASH_SEED        = 0xCBF29CE484222325ull;
+    static constexpr std::uint64_t HASH_PRIME       = 0x100000001B3ull;
+    static constexpr int           HASH_SHIFT       = 29;
+    static constexpr int           OCCLUSION_LEVELS = 4;
+    static constexpr double        CELL_MIDPOINT    = 0.5;
+    static constexpr double        HALF_CELL        = 0.5;
+    static constexpr int           WATER_STEP       = 4;
+    static constexpr int           WATER_GRID       = Chunk::SIZE / WATER_STEP + 1;
+    static constexpr int           TINT_STEP        = 4;
 
     struct CornerSamples { BlockPos a, b, c; };
 
@@ -361,7 +417,73 @@ private:
         return s;
     }
 
-    std::size_t emit_fluids(const ChunkSnapshot& snap, const ChunkMeshOptions& options, const BlockTraits* traits, ChunkMeshData& out) {
+    static bool open_corner(const ChunkSnapshot& snap, const BlockTraits* traits, BlockId id, int cx, int cy, int z) noexcept {
+        for (int dy = -1; dy <= 0; ++dy)
+            for (int dx = -1; dx <= 0; ++dx) {
+                const BlockId at = snap.at(cx + dx, cy + dy, z);
+                if (at == id ? snap.at(cx + dx, cy + dy, z + 1) == id : !traits[at].opaque) return false;
+            }
+
+        return true;
+    }
+
+    void fill_water(const ChunkSnapshot& snap, const ChunkMeshOptions& options, bool& filled) {
+        if (filled || !options.water) return;
+        const BlockPos o = snap.origin();
+
+        for (int gy = 0; gy < WATER_GRID; ++gy)
+            for (int gx = 0; gx < WATER_GRID; ++gx) m_water[static_cast<std::size_t>(gy * WATER_GRID + gx)] = (*options.water)(o.x + gx * WATER_STEP, o.y + gy * WATER_STEP);
+
+        filled = true;
+    }
+
+    WaterSample water_at(double x, double y) const noexcept {
+        const double fx = vclamp(x / WATER_STEP, 0.0, WATER_GRID - 1.0), fy = vclamp(y / WATER_STEP, 0.0, WATER_GRID - 1.0);
+        const int x0 = vmin(static_cast<int>(fx), WATER_GRID - 2), y0 = vmin(static_cast<int>(fy), WATER_GRID - 2);
+        const double tx = fx - x0, ty = fy - y0;
+        auto at = [&](int dx, int dy) -> const WaterSample& { return m_water[static_cast<std::size_t>((y0 + dy) * WATER_GRID + x0 + dx)]; };
+        const double w00 = (1.0 - tx) * (1.0 - ty), w10 = tx * (1.0 - ty), w01 = (1.0 - tx) * ty, w11 = tx * ty;
+        WaterSample out;
+        out.waves = at(0, 0).waves * w00 + at(1, 0).waves * w10 + at(0, 1).waves * w01 + at(1, 1).waves * w11;
+        auto channel = [&](auto get) { return static_cast<std::uint8_t>(std::lround(get(at(0, 0)) * w00 + get(at(1, 0)) * w10 + get(at(0, 1)) * w01 + get(at(1, 1)) * w11)); };
+        out.tint = Color(channel([](const WaterSample& s) { return double(s.tint.red()); }),
+                         channel([](const WaterSample& s) { return double(s.tint.green()); }),
+                         channel([](const WaterSample& s) { return double(s.tint.blue()); }));
+        return out;
+    }
+
+    static Color quantized(const Color& c, std::uint8_t alpha) noexcept {
+        auto q = [](std::uint8_t v) { return static_cast<std::uint8_t>(v / TINT_STEP * TINT_STEP); };
+        return Color(q(c.red()), q(c.green()), q(c.blue()), alpha);
+    }
+
+    std::array<std::uint8_t, FaceCell::CORNERS> swell_bits(const ChunkSnapshot& snap, const ChunkMeshOptions& options, const BlockTraits* traits, BlockId id, int x, int y, int z, bool& filled) {
+        std::array<std::uint8_t, FaceCell::CORNERS> bits{};
+        if (!options.split_tops) return bits;
+        fill_water(snap, options, filled);
+
+        for (std::size_t k = 0; k < SURFACE_CORNERS.size(); ++k) {
+            const int cx = x + SURFACE_CORNERS[k][0], cy = y + SURFACE_CORNERS[k][1];
+            if (open_corner(snap, traits, id, cx, cy, z)) bits[k] = fizmo::graphics::compact_swell(water_at(cx, cy).waves);
+        }
+
+        return bits;
+    }
+
+    std::array<Color, FaceCell::CORNERS> corner_tints(const ChunkSnapshot& snap, const ChunkMeshOptions& options, int x, int y, std::uint8_t alpha, bool& filled) {
+        std::array<Color, FaceCell::CORNERS> out{};
+        if (!options.water) return out;
+        fill_water(snap, options, filled);
+
+        for (std::size_t k = 0; k < SURFACE_CORNERS.size(); ++k) {
+            const Color c = water_at(x + SURFACE_CORNERS[k][0], y + SURFACE_CORNERS[k][1]).tint;
+            out[k] = Color(c.red(), c.green(), c.blue(), alpha);
+        }
+
+        return out;
+    }
+
+    std::size_t emit_fluids(const ChunkSnapshot& snap, const ChunkMeshOptions& options, const BlockTraits* traits, ChunkMeshData& out, bool& water_ready) {
         constexpr int S = Chunk::SIZE;
         std::size_t faces = 0;
 
@@ -372,20 +494,33 @@ private:
                     const BlockTraits& t = traits[id];
                     if (!t.fluid || !t.visible) continue;
                     const FluidSurface surface = fluid_surface(snap, traits, id, x, y, z);
-                    if (!surface.lowered) continue;
                     const BlockId above = snap.at(x, y, z + 1);
+                    const bool top_visible = BlockTraits::face_visible(id, t, above, traits[above]);
+                    const bool own_top = options.split_tops ? top_visible && above != id : top_visible && surface.lowered && !surface.flat;
+                    if (own_top && options.split_tops) out.fluid_tops = true;
 
-                    if (!surface.flat && BlockTraits::face_visible(id, t, above, traits[above])) {
+                    if (own_top) {
                         const std::uint64_t key = FaceKey::with_surface(face_key(id, Face::Up, options.shading), 1.0, surface.flow);
-                        emit_fluid_face(out, x, y, z, Face::Up, key, snap.light_at(x, y, z + 1), t.emission, surface);
+                        const std::array<Color, FaceCell::CORNERS> tints = corner_tints(snap, options, x, y, FaceKey::color(key).alpha(), water_ready);
+                        emit_fluid_face(out, x, y, z, Face::Up, key, snap.light_at(x, y, z + 1), t.emission, surface,
+                                        swell_bits(snap, options, traits, id, x, y, z, water_ready), options.water ? &tints : nullptr);
                         ++faces;
                     }
+
+                    if (!surface.lowered) continue;
 
                     for (Face f : SIDE_FACES) {
                         const BlockPos o = face_offset(f);
                         const BlockId nid = snap.at(x + o.x, y + o.y, z);
                         if (nid == id || !BlockTraits::face_visible(id, t, nid, traits[nid])) continue;
-                        emit_fluid_face(out, x, y, z, f, face_key(id, f, options.shading), snap.light_at(x + o.x, y + o.y, z), t.emission, surface);
+                        std::uint64_t key = face_key(id, f, options.shading);
+
+                        if (options.water) {
+                            fill_water(snap, options, water_ready);
+                            key = FaceKey::with_color(key, quantized(water_at(x + HALF_CELL, y + HALF_CELL).tint, FaceKey::color(key).alpha()));
+                        }
+
+                        emit_fluid_face(out, x, y, z, f, key, snap.light_at(x + o.x, y + o.y, z), t.emission, surface);
                         ++faces;
                     }
                 }
@@ -395,7 +530,8 @@ private:
         return faces;
     }
 
-    static void emit_fluid_face(ChunkMeshData& out, int x, int y, int z, Face f, std::uint64_t key, std::uint16_t light, const LightEmission& own, const FluidSurface& surface) {
+    static void emit_fluid_face(ChunkMeshData& out, int x, int y, int z, Face f, std::uint64_t key, std::uint16_t light, const LightEmission& own, const FluidSurface& surface,
+                                const std::array<std::uint8_t, FaceCell::CORNERS>& swell = {}, const std::array<Color, FaceCell::CORNERS>* tints = nullptr) {
         const vector3d lo{ double(x), double(y), double(z) };
         std::array<vector3d, 4> c;
         face_corners(lo, lo + vector3d{ 1.0, 1.0, 1.0 }, f, c);
@@ -411,7 +547,24 @@ private:
         const auto cf = static_cast<fizmo::graphics::CellFace>(f);
         const std::uint8_t var = FaceKey::variation(key), flags = FaceKey::vertex_flags(key), shade = FaceKey::shade(key);
         const fizmo::graphics::BakedLight baked = fizmo::graphics::BakedLight::unpack(sum.baked(own));
-        auto vertex = [&](int k) { return V(c[static_cast<std::size_t>(k)], col, cf, shade, var, flags, baked); };
+        auto vertex = [&](int k) {
+            const vector3d& p = c[static_cast<std::size_t>(k)];
+            std::uint8_t extra = 0;
+            Color tint = col;
+
+            if (f == Face::Up) {
+                const int cx = static_cast<int>(std::lround(p.x - x)), cy = static_cast<int>(std::lround(p.y - y));
+
+                for (std::size_t j = 0; j < SURFACE_CORNERS.size(); ++j) {
+                    if (SURFACE_CORNERS[j][0] != cx || SURFACE_CORNERS[j][1] != cy) continue;
+                    extra = swell[j];
+                    if (tints) tint = (*tints)[j];
+                }
+            }
+
+            return V(p, tint, cf, shade, var, static_cast<std::uint8_t>(flags | extra), baked);
+        };
+
         (FaceKey::translucent(key) ? out.translucent : out.quads).add_quad(vertex(0), vertex(1), vertex(2), vertex(3));
     }
 
@@ -523,6 +676,7 @@ private:
 
     const BlockRegistry&                            m_registry;
     GreedyMesher                                    m_greedy;
+    std::array<WaterSample, WATER_GRID * WATER_GRID> m_water{};
     std::array<std::array<CornerSamples, FaceCell::CORNERS>, FACE_COUNT> m_corners{};
     std::vector<std::array<std::uint64_t, FACE_COUNT>> m_keys;
 };

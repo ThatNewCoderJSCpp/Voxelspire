@@ -124,10 +124,11 @@ public:
             if (!v || !v->solid) return FaceKey::NONE;
             const BlockPos d = face_offset(f);
             const Voxel* n = voxel(x + 1 + d.x, y + 1 + d.y, z + d.z);
-            if (n && n->solid && n->opaque) return FaceKey::NONE;
+            if (n && n->solid) return FaceKey::NONE;
             if (f == Face::Down && req.cull_void && z == m_lowest[static_cast<std::size_t>(y + 1) * G + x + 1]) return FaceKey::NONE;
-            const Color c = f == Face::Up ? v->up : (f == Face::Down ? v->down : v->side);
-            return FaceKey::make(c, 0, req.shading.level(f));
+            const Color tint = f == Face::Up ? v->up : (f == Face::Down ? v->down : v->side);
+            const Color c(tint.red(), tint.green(), tint.blue());
+            return FaceKey::make(c, 0, req.shading.level(f), false, f == Face::Up ? v->finish : std::uint8_t(0));
         };
 
         const vector3d origin{ 0.0, 0.0, double(zmin) }, cell{ double(s), double(s), 1.0 };
@@ -138,9 +139,10 @@ public:
 
 private:
     struct Voxel {
-        bool    solid  = false;
-        bool    opaque = false;
-        Color   up, side, down;
+        bool          solid  = false;
+        bool          opaque = false;
+        std::uint8_t  finish = 0;
+        Color         up, side, down;
     };
 
     struct Tally {
@@ -285,6 +287,7 @@ private:
                 Voxel& v = col[z];
                 v.solid  = solid;
                 v.opaque = m_registry.get(ids[best_k]).is_opaque();
+                v.finish = FaceKey::finish_flags(m_registry.traits(ids[best_k]).finish);
                 v.up   = average(ids, counts, K, Z, z, Face::Up);
                 v.side = average(ids, counts, K, Z, z, Face::East);
                 v.down = average(ids, counts, K, Z, z, Face::Down);
@@ -321,8 +324,13 @@ private:
         }
 
         if (n == 0) return Color(0, 0, 0, 0);
-        return Color(static_cast<std::uint8_t>((r + n / 2) / n), static_cast<std::uint8_t>((g + n / 2) / n),
-                     static_cast<std::uint8_t>((b + n / 2) / n), static_cast<std::uint8_t>((a + n / 2) / n));
+
+        return Color(
+            static_cast<std::uint8_t>((r + n / 2) / n), 
+            static_cast<std::uint8_t>((g + n / 2) / n),
+            static_cast<std::uint8_t>((b + n / 2) / n), 
+            static_cast<std::uint8_t>((a + n / 2) / n)
+        );
     }
 
     const WorldGenerator&            m_generator;

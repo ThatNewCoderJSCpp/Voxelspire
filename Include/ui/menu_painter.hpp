@@ -11,7 +11,7 @@ namespace voxelspire {
 
 enum class HitKind : std::uint8_t {
     Tab = 0, Toggle, Slider, Minus, Plus, Value, Prev, Next, Swatch, Hex, Channel, Change, AddKey, Unbind, Button, Reset, ResetTab, Close,
-    PickerPanel, Wheel, ValueBar, AlphaBar, PickerHex, PickerChannel, PickerDone, PickerCancel
+    PickerPanel, Wheel, ValueBar, AlphaBar, PickerHex, PickerChannel, PickerDone, PickerCancel, TextValue, Cancel, Group
 };
 
 struct Hit {

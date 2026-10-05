@@ -2,8 +2,7 @@
 #define VOXELSPIRE_LIGHTING_SUN_PATH_HPP
 
 #include <cmath>
-#include "../sky/settings.hpp"
-#include "settings.hpp"
+#include "../core/settings.hpp"
 
 namespace voxelspire {
 
@@ -23,6 +22,9 @@ struct SkyState {
     double   night           = 0.0;
     double   dusk            = 0.0;
     bool     moon            = false;
+    double   clear           = 1.0;
+    double   fog_boost       = 0.0;
+    double   waves           = 1.0;
 };
 
 inline Color mix_color(const Color& a, const Color& b, double t) noexcept {
@@ -40,11 +42,12 @@ class SunPath {
 public:
     virtual ~SunPath() = default;
     virtual SkyState evaluate(double time_of_day) const = 0;
+    virtual void set_declination(double) noexcept {}
 };
 
 class DefaultSunPath final : public SunPath {
 public:
-    static constexpr double SUNRISE = 0.25;
+    static constexpr double NOON      = 0.5;
     static constexpr double FULL_TURN = 2.0 * PI;
 
     DefaultSunPath(const DayCycleSettings& settings, const CelestialSettings& bodies) : m_settings(settings), m_bodies(bodies) {}
@@ -53,8 +56,14 @@ public:
         const DayCycleSettings& s = m_settings;
         SkyState out;
         out.time = time_of_day;
-        const double angle = FULL_TURN * (time_of_day - SUNRISE);
-        vector3d sun{ std::cos(angle), -s.sun_tilt * std::sin(angle), std::sin(angle) };
+        const double hour_angle = FULL_TURN * (time_of_day - NOON);
+        const double latitude = std::atan(s.sun_tilt);
+        const double d = m_declination;
+        vector3d sun{
+            -std::cos(d) * std::sin(hour_angle),
+            std::cos(latitude) * std::sin(d) - std::sin(latitude) * std::cos(d) * std::cos(hour_angle),
+            std::sin(latitude) * std::sin(d) + std::cos(latitude) * std::cos(d) * std::cos(hour_angle)
+        };
         sun = sun / sun.magnitude();
         const double height = sun.z;
         const double sun_up = smooth_step(-s.horizon_fade, s.horizon_fade, height);
@@ -91,12 +100,17 @@ public:
         return out;
     }
 
+    void set_declination(double radians) noexcept override { m_declination = radians; }
+
+    double declination() const noexcept { return m_declination; }
+
     const DayCycleSettings&  settings() const noexcept { return m_settings; }
     const CelestialSettings& bodies()   const noexcept { return m_bodies; }
 
 private:
     DayCycleSettings  m_settings;
     CelestialSettings m_bodies;
+    double            m_declination = 0.0;
 };
 
 class WorldClock {
@@ -116,11 +130,11 @@ public:
     }
 
     void set_time(double time_of_day) noexcept { m_time = time_of_day - std::floor(time_of_day); }
+    void set(std::int64_t day, double time_of_day) noexcept { m_day = day; set_time(time_of_day); }
 
     double       time() const noexcept { return m_time; }
     std::int64_t day()  const noexcept { return m_day; }
-    double       hours(double hours_per_day) const noexcept { return m_time * hours_per_day; }
-    double       hours(const DayCycleSettings& s) const noexcept { return hours(s.hours_per_day); }
+    double       hours() const noexcept { return m_time * DayCycleSettings::HOURS_PER_DAY; }
 
 private:
     double       m_time = 0.0;

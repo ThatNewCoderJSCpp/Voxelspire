@@ -45,9 +45,12 @@ public:
         const int x = floor_to_int(center.x), y = floor_to_int(center.y);
         double inside = 0.0;
 
-        for (int z = floor_to_int(box.min.z); z <= floor_to_int(box.max.z - EPS); ++z) {
-            const double h = world.fluid_height({ x, y, z });
+        const int top = floor_to_int(box.max.z - EPS);
+
+        for (int z = floor_to_int(box.min.z); z <= top + 1; ++z) {
+            double h = world.fluid_height({ x, y, z });
             if (h <= 0.0) continue;
+            if (world.fluid_height({ x, y, z + 1 }) <= 0.0) h += world.wave_offset(center.x, center.y);
             inside += vmax(0.0, vmin(box.max.z, z + h) - vmax(box.min.z, static_cast<double>(z)));
         }
 
@@ -260,7 +263,6 @@ private:
         const int x0 = floor_to_int(region.min.x - EPS), x1 = floor_to_int(region.max.x + EPS);
         const int y0 = floor_to_int(region.min.y - EPS), y1 = floor_to_int(region.max.y + EPS);
         const int z0 = floor_to_int(region.min.z - EPS), z1 = floor_to_int(region.max.z + EPS);
-
         BlockReader reader(world);
         const BlockRegistry& blocks = world.blocks();
 

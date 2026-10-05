@@ -25,18 +25,26 @@ struct WorldRenderStats {
     std::size_t  batch_items         = 0;
     std::size_t  batches             = 0;
     std::size_t  shadow_casters      = 0;
+    std::size_t  shadow_buried       = 0;
     std::size_t  chunks_reflected    = 0;
     double       render_distance     = 0.0;
     TerrainStats terrain;
 };
 
+struct CasterSphere {
+    vector3d center;
+    double   radius = 0.0;
+};
+
 struct WorldRenderOptions {
-    double render_distance = 0.0;
-    bool   cave_culling    = true;
-    bool   face_culling    = true;
-    double shadow_distance = 0.0;
+    double                                          render_distance     = 0.0;
+    bool                                            cave_culling        = true;
+    bool                                            face_culling        = true;
+    double                                          shadow_distance     = 0.0;
+    bool                                            sun_casters         = true;
+    std::vector<CasterSphere>                       point_casters;
     std::vector<fizmo::graphics::ReflectionPlane3D> reflections;
-    double reflection_distance = 0.0;
+    double                                          reflection_distance = 0.0;
 };
 
 struct SortedMesh {
@@ -78,7 +86,7 @@ public:
             const vector3d col_lo{ c.x * size, c.y * size, column.min_z * size };
             const vector3d col_hi{ col_lo.x + size, col_lo.y + size, (column.max_z + 1) * size };
             const double col_sq = distance_sq(eye, AABB(col_lo, col_hi));
-            if (options.shadow_distance > 0.0 && col_sq <= shadow_sq) add_casters(column, c, eye, shadow_sq);
+            if (options.shadow_distance > 0.0 && col_sq <= shadow_sq) add_casters(column, c, eye, shadow_sq, options, stats);
             const bool col_main = col_sq <= max_sq && camera.is_visible(col_lo, col_hi);
             const bool col_mirror = col_sq <= mirror_sq && mirrored(col_lo, col_hi);
             if (!col_main && !col_mirror) return;
@@ -241,16 +249,30 @@ private:
         return false;
     }
 
-    void add_casters(const TerrainColumn& column, const ColumnPos& c, const vector3d& eye, double reach_sq) {
+    void add_casters(const TerrainColumn& column, const ColumnPos& c, const vector3d& eye, double reach_sq, const WorldRenderOptions& options, WorldRenderStats& stats) {
         const double size = Chunk::SIZE;
 
         for (const auto& slot : column.chunks) {
             const ChunkRenderEntry& e = *slot.second;
             if (!e.meshed || !e.opaque.valid()) continue;
             const vector3d lo{ c.x * size, c.y * size, slot.first * size };
-            if (distance_sq(eye, AABB(lo, lo + vector3d{ size, size, size })) > reach_sq) continue;
+            const AABB box(lo, lo + vector3d{ size, size, size });
+            if (distance_sq(eye, box) > reach_sq) continue;
+
+            if (!(options.sun_casters && e.sunlit) && !near_point_light(box, options.point_casters)) {
+                ++stats.shadow_buried;
+                continue;
+            }
+
             m_casters.add(e.opaque, lo);
         }
+    }
+
+    static bool near_point_light(const AABB& box, const std::vector<CasterSphere>& lights) noexcept {
+        for (const CasterSphere& l : lights)
+            if (distance_sq(l.center, box) <= l.radius * l.radius) return true;
+
+        return false;
     }
 
     static void count_groups(const fizmo::graphics::MeshHandle3D& mesh, fizmo::graphics::FaceMask mask, std::size_t& drawn, std::size_t& skipped) noexcept {

@@ -5,6 +5,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 #include "block.hpp"
@@ -23,11 +24,11 @@ public:
     BlockId add(Args&&... args) {
         if (m_locked) throw std::runtime_error("blocks must be registered before the world starts");
         auto block = std::make_unique<T>(std::forward<Args>(args)...);
-        if (m_by_name.count(block->name())) throw std::runtime_error("block already registered: " + block->name());
+        if (m_by_id.count(block->identifier())) throw std::runtime_error("block already registered: " + block->identifier().str());
         if (m_blocks.size() >= MAX_BLOCKS) throw std::runtime_error("too many block types");
         const BlockId id = static_cast<BlockId>(m_blocks.size());
-        block->m_id = id;
-        m_by_name.emplace(block->name(), id);
+        block->m_handle = id;
+        m_by_id.emplace(block->identifier(), id);
         m_traits.push_back(block->traits());
         m_blocks.push_back(std::move(block));
         return id;
@@ -43,17 +44,25 @@ public:
 
     const BlockTraits* traits_table() const noexcept { return m_traits.data(); }
 
-    std::optional<BlockId> find(const std::string& name) const {
-        auto it = m_by_name.find(name);
-        if (it == m_by_name.end()) return std::nullopt;
+    std::optional<BlockId> find(const Identifier& identifier) const {
+        auto it = m_by_id.find(identifier);
+        if (it == m_by_id.end()) return std::nullopt;
         return it->second;
     }
 
-    BlockId require(const std::string& name) const {
-        const auto id = find(name);
-        if (!id) throw std::runtime_error("unknown block: " + name);
+    std::optional<BlockId> find(std::string_view text) const {
+        const Identifier identifier = Identifier::find(Kind::Block, text);
+        if (!identifier) return std::nullopt;
+        return find(identifier);
+    }
+
+    BlockId require(const Identifier& identifier) const {
+        const auto id = find(identifier);
+        if (!id) throw std::runtime_error("unknown block: " + (identifier ? identifier.str() : std::string("(none)")));
         return *id;
     }
+
+    Identifier identifier(BlockId id) const { return get(id).identifier(); }
 
     std::size_t size() const noexcept { return m_blocks.size(); }
 
@@ -61,10 +70,10 @@ public:
     bool locked() const noexcept { return m_locked; }
 
 private:
-    std::vector<std::unique_ptr<Block>>      m_blocks;
-    std::vector<BlockTraits>                 m_traits;
-    std::unordered_map<std::string, BlockId> m_by_name;
-    bool                                     m_locked = false;
+    std::vector<std::unique_ptr<Block>>                     m_blocks;
+    std::vector<BlockTraits>                                m_traits;
+    std::unordered_map<Identifier, BlockId, IdentifierHash> m_by_id;
+    bool                                                    m_locked = false;
 };
 
 } // namespace voxelspire

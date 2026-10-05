@@ -3,7 +3,9 @@
 
 #include <cmath>
 #include <string>
+#include "../core/identifier.hpp"
 #include "../core/types.hpp"
+#include "../entity/player_defaults.hpp"
 
 namespace voxelspire {
 
@@ -21,7 +23,7 @@ class FluidResistance {
 public:
     virtual ~FluidResistance() = default;
 
-    virtual std::string id() const = 0;
+    virtual Identifier id() const = 0;
 
     vector3d apply(const vector3d& v, const FluidContext& ctx) const {
         if (ctx.submerged <= 0.0 || ctx.dt <= 0.0) return v;
@@ -49,7 +51,7 @@ private:
 
 class NoFluidResistance final : public FluidResistance {
 public:
-    std::string id() const override { return "voxelspire:none"; }
+    Identifier id() const override { return core_id(Kind::Physics, { "fluid_resistance", "none" }); }
 
 protected:
     double slow(double excess, double, const FluidContext&) const override { return excess; }
@@ -59,7 +61,7 @@ class LinearFluidDrag final : public FluidResistance {
 public:
     explicit LinearFluidDrag(double per_second) noexcept : m_k(vmax(per_second, 0.0)) {}
 
-    std::string id() const override { return "voxelspire:linear"; }
+    Identifier id() const override { return core_id(Kind::Physics, { "fluid_resistance", "linear" }); }
     double per_second() const noexcept { return m_k; }
 
 protected:
@@ -79,7 +81,7 @@ public:
     explicit TickFluidDamping(double factor_per_tick = MINECRAFT_FACTOR, double ticks_per_second = MINECRAFT_TICKS) noexcept
         : m_factor(vclamp(factor_per_tick, 0.0, 1.0)), m_ticks(vmax(ticks_per_second, 0.0)) {}
 
-    std::string id() const override { return "voxelspire:tick_damping"; }
+    Identifier id() const override { return core_id(Kind::Physics, { "fluid_resistance", "tick_damping" }); }
 
 protected:
     double slow(double excess, double, const FluidContext& ctx) const override {
@@ -94,13 +96,13 @@ class QuadraticFluidDrag final : public FluidResistance {
 public:
     static constexpr double WATER_DENSITY    = 1000.0;
     static constexpr double DRAG_COEFFICIENT = 1.0;
-    static constexpr double BODY_MASS        = 70.0;
+    static constexpr double BODY_MASS        = PlayerDefaults::mass;
     static constexpr double HALF             = 0.5;
 
     explicit QuadraticFluidDrag(double density = WATER_DENSITY, double drag_coefficient = DRAG_COEFFICIENT, double body_mass = BODY_MASS) noexcept
         : m_density(vmax(density, 0.0)), m_cd(vmax(drag_coefficient, 0.0)), m_mass(vmax(body_mass, 1e-6)) {}
 
-    std::string id() const override { return "voxelspire:quadratic"; }
+    Identifier id() const override { return core_id(Kind::Physics, { "fluid_resistance", "quadratic" }); }
 
 protected:
     double slow(double excess, double area, const FluidContext& ctx) const override {
@@ -109,7 +111,9 @@ protected:
     }
 
 private:
-    double m_density, m_cd, m_mass;
+    double m_density;
+    double m_cd;
+    double m_mass;
 };
 
 } // namespace voxelspire

@@ -5,7 +5,9 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
+#include "../core/identifier.hpp"
 #include "../core/types.hpp"
 
 namespace voxelspire {
@@ -53,6 +55,11 @@ struct FluidOccupancy {
     bool operator!=(const FluidOccupancy& o) const noexcept { return !(*this == o); }
 };
 
+struct FluidDisplacer {
+    AABB   box;
+    double share = 1.0;
+};
+
 struct FluidCell {
     bool         open  = false;
     bool         same  = false;
@@ -69,6 +76,9 @@ public:
     virtual void           put(const BlockPos& p, std::uint8_t state) = 0;
     virtual void           clear(const BlockPos& p) = 0;
     virtual FluidOccupancy occupancy(const BlockPos&) const { return {}; }
+    virtual double         speed(const BlockPos&) const { return 0.0; }
+    virtual void           set_speed(const BlockPos&, double) {}
+    virtual void           splash(const BlockPos&, double) {}
 
     virtual FluidCell look(const BlockPos& p) const {
         const bool fluid = same(p);
@@ -82,7 +92,7 @@ public:
 
     virtual ~FluidRules() = default;
 
-    virtual std::string id() const = 0;
+    virtual Identifier id() const = 0;
     virtual double interval() const noexcept = 0;
     virtual double level(std::uint8_t state) const noexcept = 0;
     virtual bool   falling(std::uint8_t) const noexcept { return false; }
@@ -102,7 +112,7 @@ class StillFluid final : public FluidRules {
 public:
     static constexpr double IDLE_INTERVAL = 1.0;
 
-    std::string id() const override { return "voxelspire:still"; }
+    Identifier id() const override { return core_id(Kind::Physics, { "fluid_flow", "still" }); }
     double interval() const noexcept override { return IDLE_INTERVAL; }
     double level(std::uint8_t) const noexcept override { return 1.0; }
     bool   flows() const noexcept override { return false; }
@@ -123,7 +133,7 @@ public:
     explicit MinecraftFluid(double interval = DEFAULT_INTERVAL, int spread = DEFAULT_SPREAD, int slope_search = DEFAULT_SLOPE_SEARCH, bool infinite_sources = true) noexcept
         : m_interval(vmax(interval, MIN_INTERVAL)), m_spread(vclamp(spread, 1, MAX_SPREAD)), m_search(vclamp(slope_search, 0, MAX_SEARCH)), m_infinite(infinite_sources) {}
 
-    std::string id() const override { return "voxelspire:minecraft"; }
+    Identifier id() const override { return core_id(Kind::Physics, { "fluid_flow", "minecraft" }); }
     double interval() const noexcept override { return m_interval; }
 
     double level(std::uint8_t state) const noexcept override {
@@ -248,20 +258,33 @@ public:
     static constexpr int    MAX_DROP_SEARCH     = 8;
     static constexpr int    UNITS               = 255;
     static constexpr int    SETTLE_GAP          = 2;
+    static constexpr int    NO_SEA              = std::numeric_limits<int>::min();
+
+    static constexpr double SPLASH_FALL      = 3.0;
+    static constexpr double SPILL_FALL       = 6.0;
+    static constexpr double SPLASH_SHARE     = 0.06;
+    static constexpr double MAX_SPLASH_SHARE = 0.6;
+    static constexpr double SPEED_KEEP       = 0.5;
+    static constexpr double SPEED_DECAY      = 0.6;
+    static constexpr double MIN_SPEED        = 0.5;
 
     explicit RealisticFluid(
         double interval    = DEFAULT_INTERVAL,
         double min_depth   = DEFAULT_MIN_DEPTH,
         bool   seek_drops  = true,
         int    drop_search = DEFAULT_DROP_SEARCH,
-        bool   displace    = false
+        bool   displace    = false,
+        double splash      = 0.0,
+        int    sea_level   = NO_SEA
     ) noexcept
         : m_interval(vmax(interval, MIN_INTERVAL)),
           m_min_units(vclamp(static_cast<int>(min_depth * UNITS + 0.5), 1, UNITS)),
           m_search(seek_drops ? vclamp(drop_search, 1, MAX_DROP_SEARCH) : 0),
-          m_displace(displace) {}
+          m_displace(displace),
+          m_splash(vmax(splash, 0.0)),
+          m_sea(sea_level) {}
 
-    std::string id() const override { return "voxelspire:realistic"; }
+    Identifier id() const override { return core_id(Kind::Physics, { "fluid_flow", "realistic" }); }
     double interval() const noexcept override { return m_interval; }
     double level(std::uint8_t state) const noexcept override { return static_cast<double>(units(state)) / UNITS; }
     bool   displaces() const noexcept override { return m_displace; }
@@ -271,18 +294,28 @@ public:
 
     void update(FluidAccess& f, const BlockPos& p) const override {
         if (!f.same(p)) return;
+        if (sea_exchange(f, p)) return;
         int mass = units(f.state(p));
         if (m_displace) mass = overflow(f, p, mass);
         if (mass == 0) return;
         const BlockPos below = offset(p, DOWN);
         const int room = room_in(f, below);
+        const double speed = m_splash > 0.0 ? f.speed(p) : 0.0;
 
         if (room > 0) {
             const int move = vmin(mass, room);
             f.put(below, state_for(mass_in(f, below) + move));
+            if (m_splash > 0.0) f.set_speed(below, vmax(f.speed(below), speed + 1.0));
             mass -= move;
             store(f, p, mass);
             if (mass == 0) return;
+        }
+
+        if (speed >= SPLASH_FALL && room == 0) {
+            mass = splash(f, p, mass, speed);
+            if (mass == 0) return;
+        } else if (speed > 0.0) {
+            f.set_speed(p, speed > MIN_SPEED ? speed * SPEED_DECAY : 0.0);
         }
 
         const int settled = spread(f, p, mass);
@@ -297,6 +330,58 @@ private:
     static constexpr int    THIN_FACTOR     = 4;
 
     struct Side { BlockPos pos; int mass; int level; FluidOccupancy occ; };
+
+    bool open_sea(FluidAccess& f, const BlockPos& q) const {
+        return q.z == m_sea && f.same(q) && f.same(offset(q, DOWN));
+    }
+
+    bool sea_exchange(FluidAccess& f, const BlockPos& p) const {
+        if (m_sea == NO_SEA) return false;
+
+        if (p.z == m_sea + 1 && open_sea(f, offset(p, DOWN))) {
+            f.clear(p);
+            return true;
+        }
+
+        if (open_sea(f, p) && units(f.state(p)) < UNITS && capacity(occupancy(f, p)) >= UNITS) {
+            f.put(p, state_for(UNITS));
+            return true;
+        }
+
+        return false;
+    }
+
+    int splash(FluidAccess& f, const BlockPos& p, int mass, double speed) const {
+        const double energy = (speed - SPLASH_FALL + 1.0) * m_splash;
+        const int spray = static_cast<int>(mass * vmin(MAX_SPLASH_SHARE, energy * SPLASH_SHARE));
+        f.set_speed(p, 0.0);
+        f.splash(p, energy);
+        if (spray <= 0) return mass;
+        const int share = vmax(spray / static_cast<int>(SIDES.size()), 1);
+        int left = mass;
+
+        for (const BlockPos& d : SIDES) {
+            if (left <= share) break;
+            const BlockPos q = offset(p, d);
+            BlockPos target = q;
+
+            if (!f.open(q) && !f.same(q)) {
+                if (speed < SPILL_FALL) continue;
+                target = offset(q, UP);
+            } else {
+                const BlockPos far = offset(q, d);
+                if (room_in(f, far) > 0) target = far;
+            }
+
+            const int given = give(f, target, share);
+            if (given <= 0) continue;
+            f.set_speed(target, speed * SPEED_KEEP);
+            left -= given;
+        }
+
+        store(f, p, left);
+        return left;
+    }
 
     static void store(FluidAccess& f, const BlockPos& p, int mass) {
         if (mass <= 0) f.clear(p);
@@ -461,6 +546,8 @@ private:
     int    m_min_units;
     int    m_search;
     bool   m_displace;
+    double m_splash;
+    int    m_sea;
 };
 
 } // namespace voxelspire

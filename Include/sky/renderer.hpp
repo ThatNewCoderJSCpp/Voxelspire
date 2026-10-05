@@ -6,7 +6,7 @@
 #include <random>
 #include <vector>
 #include "../lighting/sun_path.hpp"
-#include "settings.hpp"
+#include "../core/settings.hpp"
 
 namespace voxelspire {
 
@@ -167,7 +167,7 @@ private:
         using fizmo::graphics::Blend3D;
         const SunSettings& s = m_settings.sun;
         const vector3d direction = view.sky.sun_position;
-        const double fade = horizon(direction);
+        const double fade = horizon(direction) * view.sky.clear;
         if (fade <= 0.0) return;
         const Basis b = basis(direction, view.orbit_axis, distance, s.size);
         const Rgba base = rgba(mix_color(s.color, s.dusk_color, view.sky.dusk), s.brightness, fade);
@@ -195,7 +195,7 @@ private:
         const MoonSettings& m = m_settings.moon;
         const vector3d direction = view.sky.moon_position;
         const double night = view.sky.night;
-        const double fade = horizon(direction) * (m.day_visibility + (1.0 - m.day_visibility) * night);
+        const double fade = horizon(direction) * (m.day_visibility + (1.0 - m.day_visibility) * night) * view.sky.clear;
         if (fade <= 0.0) return;
         const Basis b = basis(direction, view.orbit_axis, distance, m.size);
         const double phase = moon_phase(view.days);
@@ -260,7 +260,7 @@ private:
 
     void draw_stars(fizmo::windows::Renderer& renderer, const CelestialView& view, double distance) {
         const StarSettings& s = m_settings.stars;
-        const double visible = s.brightness * (s.day_visibility + (1.0 - s.day_visibility) * view.sky.night);
+        const double visible = s.brightness * (s.day_visibility + (1.0 - s.day_visibility) * view.sky.night) * view.sky.clear;
         if (visible <= 0.0) return;
         if (m_stars_dirty) build_stars();
         if (m_stars.empty()) return;

@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include "../core/identifier.hpp"
 #include "../core/types.hpp"
 
 namespace voxelspire {
@@ -24,7 +25,7 @@ class AirResistance {
 public:
     virtual ~AirResistance() = default;
 
-    virtual std::string id() const = 0;
+    virtual Identifier id() const = 0;
     virtual double apply(double vertical_velocity, const AirContext& ctx) const = 0;
     virtual double terminal_velocity(const AirContext& ctx) const = 0;
 
@@ -43,7 +44,7 @@ protected:
 
 class NoAirResistance final : public AirResistance {
 public:
-    std::string id() const override { return "voxelspire:none"; }
+    Identifier id() const override { return core_id(Kind::Physics, { "air_resistance", "none" }); }
     double apply(double v, const AirContext&) const override { return v; }
     double terminal_velocity(const AirContext&) const override { return unlimited(); }
 };
@@ -52,7 +53,7 @@ class TerminalVelocityCap final : public AirResistance {
 public:
     explicit TerminalVelocityCap(double max_fall_speed) noexcept : m_max(vmax(max_fall_speed, 0.0)) {}
 
-    std::string id() const override { return "voxelspire:terminal_velocity_cap"; }
+    Identifier id() const override { return core_id(Kind::Physics, { "air_resistance", "terminal_velocity_cap" }); }
     double apply(double v, const AirContext& ctx) const override { return cap_fall(v, terminal_velocity(ctx), ctx); }
     double terminal_velocity(const AirContext& ctx) const override { return scaled_cap(m_max, ctx); }
 
@@ -64,7 +65,7 @@ private:
 
 class WorldHeightLimit final : public AirResistance {
 public:
-    std::string id() const override { return "voxelspire:world_height_limit"; }
+    Identifier id() const override { return core_id(Kind::Physics, { "air_resistance", "world_height_limit" }); }
     double apply(double v, const AirContext& ctx) const override { return cap_fall(v, terminal_velocity(ctx), ctx); }
 
     double terminal_velocity(const AirContext& ctx) const override {
@@ -80,7 +81,7 @@ public:
         return terminal_velocity > 0.0 ? std::fabs(gravity) / terminal_velocity : 0.0;
     }
 
-    std::string id() const override { return "voxelspire:linear_drag"; }
+    Identifier id() const override { return core_id(Kind::Physics, { "air_resistance", "linear_drag" }); }
     double apply(double v, const AirContext& ctx) const override { return v * std::exp(-strength(ctx) * ctx.dt); }
 
     double terminal_velocity(const AirContext& ctx) const override {
@@ -104,7 +105,7 @@ public:
         return terminal_velocity > 0.0 ? std::fabs(gravity) / (terminal_velocity * terminal_velocity) : 0.0;
     }
 
-    std::string id() const override { return "voxelspire:quadratic_drag"; }
+    Identifier id() const override { return core_id(Kind::Physics, { "air_resistance", "quadratic_drag" }); }
     double apply(double v, const AirContext& ctx) const override { return v / (1.0 + strength(ctx) * std::fabs(v) * ctx.dt); }
 
     double terminal_velocity(const AirContext& ctx) const override {
@@ -125,17 +126,17 @@ public:
     using ApplyFn    = std::function<double(double vertical_velocity, const AirContext& ctx)>;
     using TerminalFn = std::function<double(const AirContext& ctx)>;
 
-    CustomAirResistance(std::string id, ApplyFn apply, TerminalFn terminal = {})
-        : m_id(std::move(id)), m_apply(std::move(apply)), m_terminal(std::move(terminal)) {}
+    CustomAirResistance(Identifier id, ApplyFn apply, TerminalFn terminal = {})
+        : m_id(id), m_apply(std::move(apply)), m_terminal(std::move(terminal)) {}
 
-    std::string id() const override { return m_id; }
+    Identifier id() const override { return m_id; }
     double apply(double v, const AirContext& ctx) const override { return m_apply ? m_apply(v, ctx) : v; }
     double terminal_velocity(const AirContext& ctx) const override { return m_terminal ? m_terminal(ctx) : unlimited(); }
 
 private:
-    std::string m_id;
-    ApplyFn     m_apply;
-    TerminalFn  m_terminal;
+    Identifier m_id;
+    ApplyFn    m_apply;
+    TerminalFn m_terminal;
 };
 
 } // namespace voxelspire

@@ -16,6 +16,27 @@
 
 namespace voxelspire {
 
+struct CpuTimings {
+    static constexpr double SMOOTHING = 0.1;
+
+    double update    = 0.0;
+    double ticks     = 0.0;
+    double fluids    = 0.0;
+    double streaming = 0.0;
+    double lighting  = 0.0;
+    double render    = 0.0;
+
+    static void blend(double& value, double sample) noexcept { value += (sample - value) * SMOOTHING; }
+
+    void blend_update(const CpuTimings& s) noexcept {
+        blend(update, s.update);
+        blend(ticks, s.ticks);
+        blend(fluids, s.fluids);
+        blend(streaming, s.streaming);
+        blend(lighting, s.lighting);
+    }
+};
+
 struct HudInfo {
     double   fps_average = 0.0;
     vector3d position{};
@@ -38,17 +59,16 @@ struct HudInfo {
     int         worker_threads      = 0;
     std::size_t particles           = 0;
     std::size_t particle_emitters   = 0;
-    std::uint64_t seed               = 0;
+    std::string   biome;
     LightStats    light;
     std::string   lighting_preset;
     double        time_hours         = 0.0;
-    double        minutes_per_hour   = 60.0;
-    double        seconds_per_minute = 60.0;
     std::int64_t  day                = 0;
     bool          day_cycle          = true;
     LightLevel    light_here;
     std::size_t   dynamic_lights     = 0;
     std::size_t   shadow_casters     = 0;
+    std::size_t   shadow_buried      = 0;
     std::string   water_preset;
     std::string   fluid_model;
     std::string   flow_model;
@@ -56,8 +76,14 @@ struct HudInfo {
     std::size_t   reflection_planes  = 0;
     int           render_distance    = 0;
     double        daylight           = 1.0;
+    std::string   water_weather;
+    std::string   date;
+    std::string   weather;
+    double        temperature        = 0.0;
+    TemperatureUnit temperature_unit = TemperatureUnit::Celsius;
         
     fizmo::windows::GpuTimings gpu;
+    CpuTimings                 cpu;
 };
 
 struct HudMeter {
@@ -87,6 +113,14 @@ public:
     static constexpr std::size_t MAX_CACHED_WIDTHS   = 4096;
     static constexpr int         CORNER_COUNT        = 4;
     static constexpr double      PERCENT             = 100.0;
+    static constexpr double      FAHRENHEIT_SCALE    = 1.8;
+    static constexpr double      FAHRENHEIT_OFFSET   = 32.0;
+
+    static std::string temperature_text(double celsius, TemperatureUnit unit) {
+        const double fahrenheit = celsius * FAHRENHEIT_SCALE + FAHRENHEIT_OFFSET;
+        if (unit == TemperatureUnit::Fahrenheit) return format("%.1f F (%.1f C)", fahrenheit, celsius);
+        return format("%.1f C (%.1f F)", celsius, fahrenheit);
+    }
 
     static HudCorner next_corner(HudCorner c) noexcept { return static_cast<HudCorner>((static_cast<int>(c) + 1) % CORNER_COUNT); }
 
@@ -109,8 +143,10 @@ public:
         if (hs.sections.performance) {
             header("Performance");
             row("FPS", format("%.0f", info.fps_average));
+            row("CPU", format("update %.2f ms (ticks %.2f, fluids %.2f, streaming %.2f, light %.2f), render %.2f ms", info.cpu.update, info.cpu.ticks, info.cpu.fluids, info.cpu.streaming, info.cpu.lighting, info.cpu.render));
             row("Draws", format("%zu meshes in %zu batches: %zu on screen, %zu shadow, %zu reflection only", st.batch_items, st.batches, st.batch_items - st.shadow_casters - st.chunks_reflected, st.shadow_casters, st.chunks_reflected));
             row("Jobs", format("%zu gen, %zu mesh, %zu LOD, %zu uploads (%d threads)", info.streaming.jobs_in_flight, t.mesh_jobs, t.lod_jobs, t.pending_uploads, info.worker_threads));
+            row("Remeshes", format("%zu total, %zu kept their solid mesh", t.uploads, t.reused));
             row("Mesh memory", format("%.1f MB GPU, %.1f MB RAM", t.gpu_mesh_bytes / MB, t.cpu_mesh_bytes / MB));
         }
 
@@ -144,11 +180,14 @@ public:
 
         if (hs.sections.world) {
             header("World");
-            row("Seed", format("%llu", static_cast<unsigned long long>(info.seed)));
-            const double minutes = (info.time_hours - std::floor(info.time_hours)) * info.minutes_per_hour;
+            if (!info.biome.empty()) row("Biome", info.biome);
+            const double minutes = (info.time_hours - std::floor(info.time_hours)) * DayCycleSettings::MINUTES_PER_HOUR;
             const int hour = static_cast<int>(info.time_hours), minute = static_cast<int>(minutes);
-            const int second = static_cast<int>((minutes - minute) * info.seconds_per_minute);
+            const int second = static_cast<int>((minutes - minute) * DayCycleSettings::SECONDS_PER_MINUTE);
             row("Time", format("%02d:%02d:%02d, day %lld%s", hour, minute, second, static_cast<long long>(info.day), info.day_cycle ? "" : " (paused)"));
+            if (!info.date.empty()) row("Date", info.date);
+            if (!info.weather.empty()) row("Weather", info.weather);
+            row("Temperature", temperature_text(info.temperature, info.temperature_unit));
             row("Columns", format("%zu loaded, %zu stored edits", info.streaming.loaded_columns, info.streaming.stored_chunks));
             row("Entities", format("%zu (%zu touching)", info.entity_count, info.entity_contacts));
             row("Particles", format("%zu (%zu emitters)", info.particles, info.particle_emitters));
@@ -156,6 +195,7 @@ public:
             else row("Air", info.air_model + ", no terminal velocity");
             row("Fluids", format("%s preset, %s", info.water_preset.c_str(), info.fluid_model.c_str()));
             row("Water flow", format("%s, %zu waiting, %zu updated, %zu far away", info.flow_model.c_str(), info.fluids.pending, info.fluids.updated, info.fluids.dormant));
+            if (!info.water_weather.empty()) row("Waves and rain", info.water_weather);
         }
 
         if (hs.sections.rendering) {
@@ -170,7 +210,7 @@ public:
         if (hs.sections.lighting) {
             header("Lighting");
             row("Preset", format("%s, %s light", info.lighting_preset.c_str(), light_format_name(info.light.format)));
-            row("Lights", format("%zu point lights, %zu shadow casters", info.dynamic_lights, info.shadow_casters));
+            row("Lights", format("%zu point lights, %zu shadow casters, %zu buried skipped", info.dynamic_lights, info.shadow_casters, info.shadow_buried));
             row("Light data", format("%zu sections, %.2f MB, %zu emitters", info.light.sections, info.light.bytes / MB, info.light.emitters));
             row("Updates", format("%zu pending, %.2f ms", info.light.pending_columns, info.light.update_ms));
             light_rows(info, hs);
@@ -203,19 +243,11 @@ private:
         row("Light level", format("%d / %d, %s", level, LightLimits::MAX, source), { { level / max, hs.level_meter, 1.0 } });
         row("Sky light", sky_text, { { sky_now / max, hs.sky_meter, 1.0, lh.sky / max } });
         
-        row(
-            "Block light", 
-            format("%d / %d  (R %d, G %d, B %d)", 
-                block, LightLimits::MAX, 
-                lh.red, lh.green, lh.blue
-            ),
-            { 
-                { 1.0, Color(byte(lh.red), byte(lh.green), byte(lh.blue)), SWATCH_WIDTH },
-                { lh.red / max, hs.red_meter, CHANNEL_WIDTH },
-                { lh.green / max, hs.green_meter, CHANNEL_WIDTH },
-                { lh.blue / max, hs.blue_meter, CHANNEL_WIDTH } 
-            }
-        );
+        row("Block light", format("%d / %d  (R %d, G %d, B %d)", block, LightLimits::MAX, lh.red, lh.green, lh.blue),
+            { { 1.0, Color(byte(lh.red), byte(lh.green), byte(lh.blue)), SWATCH_WIDTH },
+              { lh.red / max, hs.red_meter, CHANNEL_WIDTH },
+              { lh.green / max, hs.green_meter, CHANNEL_WIDTH },
+              { lh.blue / max, hs.blue_meter, CHANNEL_WIDTH } });
     }
 
     int meters_width(const HudRow& row, double size, const HudSettings& hs) const noexcept {

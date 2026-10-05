@@ -16,7 +16,7 @@ enum class Action {
     CycleCamera, OpenMenu, Respawn, ToggleHud,
     RenderDistanceUp, RenderDistanceDown,
     CycleLighting, ToggleHandLight, TimeForward, TimeBackward, ToggleDayCycle,
-    Swim, CycleHudCorner, HudLarger, HudSmaller, Alt
+    Swim, CycleHudCorner, HudLarger, HudSmaller, Alt, CycleWeather
 };
 
 struct ActionInfo {
@@ -52,6 +52,7 @@ inline const std::vector<ActionInfo>& all_actions() {
         { Action::TimeForward,        "time_forward",         "Time forward",          "Skip ahead one hour." },
         { Action::TimeBackward,       "time_backward",        "Time backward",         "Go back one hour." },
         { Action::ToggleDayCycle,     "toggle_day_cycle",     "Pause time",            "Stop or resume the day and night cycle." },
+        { Action::CycleWeather,       "cycle_weather",        "Next weather",          "Switch to clear, rain or a storm right away." },
     };
     return actions;
 }
@@ -83,6 +84,7 @@ public:
         b.bind(Action::TimeForward,        { "]", "}" });
         b.bind(Action::TimeBackward,       { "[", "{" });
         b.bind(Action::ToggleDayCycle,     { "F8" });
+        b.bind(Action::CycleWeather,       { "F6" });
         b.bind(Action::Swim,               { "LeftShift" });
         b.bind(Action::CycleHudCorner,     { "F4" });
         b.bind(Action::Alt,                { "LeftAlt" });

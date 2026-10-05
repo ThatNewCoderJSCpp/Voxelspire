@@ -91,6 +91,27 @@ public:
 
     bool modified() const noexcept { return m_modified; }
     void mark_pristine() noexcept { m_modified = false; }
+    void mark_modified() noexcept { m_modified = true; }
+
+    bool                has_states() const noexcept { return !m_states.empty(); }
+    const std::uint8_t* states()     const noexcept { return m_states.data(); }
+
+    void set_blocks(const std::vector<BlockId>& blocks) noexcept {
+        m_non_air = 0;
+
+        for (int i = 0; i < VOLUME; ++i) {
+            m_blocks[static_cast<std::size_t>(i)] = blocks[static_cast<std::size_t>(i)];
+            if (m_blocks[static_cast<std::size_t>(i)] != AIR_ID) ++m_non_air;
+        }
+
+        ++m_revision;
+    }
+
+    void set_states(const std::vector<std::uint8_t>& states) {
+        m_states = states;
+        m_states.resize(VOLUME, 0);
+        ++m_revision;
+    }
 
     const BlockId* data() const noexcept { return m_blocks.data(); }
 
@@ -98,8 +119,8 @@ public:
         return static_cast<std::size_t>((ly * SIZE + lz) * SIZE + lx);
     }
 
-    bool         empty()          const noexcept { return m_non_air == 0; }
-    std::size_t  non_air_count()  const noexcept { return m_non_air; }
+    bool         empty()         const noexcept { return m_non_air == 0; }
+    std::size_t  non_air_count() const noexcept { return m_non_air; }
 
     std::uint64_t revision() const noexcept { return m_revision; }
 
