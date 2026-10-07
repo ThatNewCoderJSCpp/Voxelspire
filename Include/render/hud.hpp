@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "../core/process_memory.hpp"
 #include "../core/settings.hpp"
 #include "../world/chunk_streamer.hpp"
 #include "../world/voxel_raycast.hpp"
@@ -81,9 +82,20 @@ struct HudInfo {
     std::string   weather;
     double        temperature        = 0.0;
     TemperatureUnit temperature_unit = TemperatureUnit::Celsius;
+    bool          heat_on            = false;
+    double        body_temperature   = 0.0;
+    double        felt_temperature   = 0.0;
+    double        heat_warmth        = 0.0;
+    double        heat_surround      = 0.0;
+    double        heat_exchange      = 1.0;
+    bool          heat_player        = true;
+    double        clothing           = 0.0;
+    std::string   body_state;
         
     fizmo::windows::GpuTimings gpu;
     CpuTimings                 cpu;
+    fizmo::windows::GpuMemory  vram;
+    ProcessMemory              ram;
 };
 
 struct HudMeter {
@@ -115,11 +127,32 @@ public:
     static constexpr double      PERCENT             = 100.0;
     static constexpr double      FAHRENHEIT_SCALE    = 1.8;
     static constexpr double      FAHRENHEIT_OFFSET   = 32.0;
+    static constexpr double      GIGABYTE            = 1024.0 * 1024.0 * 1024.0;
 
     static std::string temperature_text(double celsius, TemperatureUnit unit) {
         const double fahrenheit = celsius * FAHRENHEIT_SCALE + FAHRENHEIT_OFFSET;
         if (unit == TemperatureUnit::Fahrenheit) return format("%.1f F (%.1f C)", fahrenheit, celsius);
         return format("%.1f C (%.1f F)", celsius, fahrenheit);
+    }
+
+    static std::string ram_text(const ProcessMemory& m) {
+        if (!m.valid) return "not available";
+        std::string out = format("%.2f GB used by the game (peak %.2f GB)", m.used / GIGABYTE, m.peak / GIGABYTE);
+        if (m.system_total > 0) out += format(", %.1f of %.1f GB free on the computer", m.system_available / GIGABYTE, m.system_total / GIGABYTE);
+        return out;
+    }
+
+    static std::string vram_text(const fizmo::windows::GpuMemory& m) {
+        if (!m.valid) return "not available (software renderer)";
+        if (!m.measured) return format("%.2f GB on the card, usage not reported by the driver", m.total / GIGABYTE);
+        std::string out = format("%.2f GB used of %.2f GB the game may use (%.2f GB card)", m.used / GIGABYTE, m.budget / GIGABYTE, m.total / GIGABYTE);
+        if (m.shared_used > 0) out += format(", %.2f GB of shared system memory", m.shared_used / GIGABYTE);
+        return out;
+    }
+
+    static std::string change_text(double celsius, TemperatureUnit unit) {
+        if (unit == TemperatureUnit::Fahrenheit) return format("%.1f F", celsius * FAHRENHEIT_SCALE);
+        return format("%.1f C", celsius);
     }
 
     static HudCorner next_corner(HudCorner c) noexcept { return static_cast<HudCorner>((static_cast<int>(c) + 1) % CORNER_COUNT); }
@@ -148,6 +181,8 @@ public:
             row("Jobs", format("%zu gen, %zu mesh, %zu LOD, %zu uploads (%d threads)", info.streaming.jobs_in_flight, t.mesh_jobs, t.lod_jobs, t.pending_uploads, info.worker_threads));
             row("Remeshes", format("%zu total, %zu kept their solid mesh", t.uploads, t.reused));
             row("Mesh memory", format("%.1f MB GPU, %.1f MB RAM", t.gpu_mesh_bytes / MB, t.cpu_mesh_bytes / MB));
+            row("RAM", ram_text(info.ram));
+            row("VRAM", vram_text(info.vram));
         }
 
         if (hs.sections.gpu) {
@@ -174,6 +209,15 @@ public:
             row("Speed", format("%.2f b/s %s", hspeed, info.on_ground ? "(ground)" : "(air)"));
             row("Movement", info.movement_mode);
             row("Camera", info.camera_mode);
+
+            if (info.heat_on) {
+                if (info.heat_player) row("Body", temperature_text(info.body_temperature, info.temperature_unit) + ", " + info.body_state);
+                else row("Body", "not affected by heat");
+                row("Feels like", temperature_text(info.felt_temperature, info.temperature_unit) + format(", clothing %.1f", info.clothing));
+                row("Around you", temperature_text(info.heat_surround, info.temperature_unit) + ", +" + change_text(info.heat_warmth, info.temperature_unit)
+                    + format(" from heat sources, losing heat %.1fx as fast as in still air", info.heat_exchange));
+            }
+
             if (info.target) row("Target", format("%s at %d %d %d, %s face", info.target_name.c_str(), info.target->block.x, info.target->block.y, info.target->block.z, face_name(info.target->face)));
             else row("Target", "none");
         }

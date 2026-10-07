@@ -123,6 +123,7 @@ struct EntityLimits {
 };
 
 struct CharacterLimits {
+    static constexpr Bounds clothing             { 0.0, 6.0 };
     static constexpr Bounds width                { 0.2, 2.0 };
     static constexpr Bounds reach                { 1.0, 20.0 };
     static constexpr Bounds mass                 { 10.0, 300.0 };
@@ -190,6 +191,7 @@ struct LightingLimits {
     static constexpr Bounds shadow_filter_taps          { 1.0, 8.0 };
     static constexpr Bounds sun_shadow_redraw           { 0.0, 0.5 };
     static constexpr Bounds max_point_shadows           { 0.0, 8.0 };
+    static constexpr Bounds moving_shadow_faces         { 0.0, 48.0 };
     static constexpr Bounds point_shadow_fade           { 0.0, 16.0 };
     static constexpr Bounds capsule_shadow_sun_size     { 0.0, 5.0 };
     static constexpr Bounds capsule_shadow_lamp_size    { 0.0, 1.0 };
@@ -233,6 +235,15 @@ struct LightingLimits {
     static constexpr Bounds update_budget_ms            { 0.1, 20.0 };
 };
 
+struct DynamicLightLimits {
+    static constexpr Bounds intensity { 0.0, 4.0 };
+    static constexpr Bounds radius    { 1.0, 40.0 };
+    static constexpr Bounds level     { 0.0, 15.0 };
+    static constexpr Bounds heat      { 0.0, 200.0 };
+    static constexpr Bounds cone      { 0.0, 180.0 };
+    static constexpr Bounds softness  { 0.0, 1.0 };
+};
+
 struct DayCycleLimits {
     static constexpr Bounds real_day_minutes { 0.25, 1440.0 };
     static constexpr Bounds sun_tilt         { 0.0, 1.0 };
@@ -240,6 +251,22 @@ struct DayCycleLimits {
     static constexpr Bounds horizon_fade     { 0.01, 0.5 };
     static constexpr Bounds twilight         { 0.01, 0.5 };
     static constexpr Bounds dusk_sky_mix     { 0.0, 1.0 };
+};
+
+struct HeatLimits {
+    static constexpr Bounds body          { 25.0, 45.0 };
+    static constexpr Bounds comfort       { -30.0, 50.0 };
+    static constexpr Bounds rate          { 0.0, 1.0 };
+    static constexpr Bounds recovery_rate { 0.0, 10.0 };
+    static constexpr Bounds exchange      { 0.0, 20.0 };
+    static constexpr Bounds clothing      { 0.0, 20.0 };
+    static constexpr Bounds strength      { 0.0, 5.0 };
+    static constexpr Bounds faintest      { 0.01, 5.0 };
+    static constexpr Bounds insulation    { 0.0, 3.0 };
+    static constexpr Bounds speed         { 0.1, 1.0 };
+    static constexpr Bounds simple_radius { 1.0, 32.0 };
+    static constexpr Bounds threshold     { -40.0, 60.0 };
+    static constexpr Bounds seconds       { 1.0, 600.0 };
 };
 
 struct PhysicsLimits {
@@ -340,6 +367,13 @@ struct TemperatureLimits {
     static constexpr Bounds offset          { -40.0, 40.0 };
     static constexpr Bounds weather_cooling { 0.0, 20.0 };
     static constexpr Bounds cloud_damping   { 0.0, 1.0 };
+    static constexpr Bounds climate_mix     { 0.0, 1.0 };
+    static constexpr Bounds blend_distance  { 0.0, 256.0 };
+    static constexpr Bounds local_variation { 0.0, 15.0 };
+    static constexpr Bounds local_size      { 2.0, 128.0 };
+    static constexpr Bounds drift           { 0.0, 20.0 };
+    static constexpr Bounds drift_size      { 32.0, 4096.0 };
+    static constexpr Bounds drift_speed     { 0.0, 10.0 };
 };
 
 struct WeatherLimits {
@@ -356,6 +390,8 @@ struct WeatherLimits {
     static constexpr Bounds season_rain     { 0.0, 5.0 };
     static constexpr Bounds showers         { 0.0, 2.0 };
     static constexpr Bounds shower_hours    { 0.25, 24.0 };
+    static constexpr Bounds shower_size     { 16.0, 2048.0 };
+    static constexpr Bounds rain_fade       { 0.0, 60.0 };
 };
 
 struct WeatherViewLimits {

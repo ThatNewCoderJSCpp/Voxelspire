@@ -244,9 +244,12 @@ struct EntitySettings {
 };
 
 struct CharacterSettings {
+    static constexpr double NORMAL_CLOTHING = 1.0;
+
     double width = PlayerDefaults::width;
     double reach = PlayerDefaults::reach;
     double mass  = PlayerDefaults::mass;
+    double clothing = NORMAL_CLOTHING;
 
     double standing_height  = PlayerDefaults::height::standing;
     double crouching_height = PlayerDefaults::height::crouching;
@@ -348,6 +351,7 @@ struct LightingSettings {
     double       sun_shadow_redraw            = 0.125;
     bool         point_shadows                = false;
     unsigned int max_point_shadows            = 4;
+    unsigned int moving_shadow_faces          = 12;
     unsigned int point_shadow_resolution      = 512;
     double       point_shadow_fade            = 4.0;
     bool         hide_unshadowed_point_lights = true;
@@ -532,12 +536,46 @@ struct DayCycleSettings {
 };
 
 enum class AirModel : std::uint8_t { Keep = 0, None, TerminalCap, WorldHeight, Linear, Quadratic };
+enum class HeatModel : std::uint8_t { Off = 0, Simple, Realistic };
+ 
+struct HeatSettings {
+    HeatModel model             = HeatModel::Simple;
+    bool      affects_player    = false;
+    bool      effects           = false;
+    double    normal_body       = 37.0;
+    double    comfort_low       = 16.0;
+    double    comfort_high      = 30.0;
+    double    exchange_rate     = 0.02;
+    double    wind_exchange     = 0.3;
+    double    rain_exchange     = 0.8;
+    double    water_exchange    = 3.0;
+    double    ground_exchange   = 0.25;
+    double    recovery_rate     = 0.6;
+    double    clothing_degrees  = 6.0;
+    double    source_strength   = 1.0;
+    double    faintest_warmth   = 0.25;
+    double    insulation_scale  = 1.0;
+    double    cold_body         = 35.5;
+    double    freezing_body     = 33.0;
+    double    hot_body          = 38.5;
+    double    overheating_body  = 40.0;
+    double    cold_speed        = 0.9;
+    double    freezing_speed    = 0.6;
+    double    hot_speed         = 0.95;
+    double    overheating_speed = 0.75;
+    double    simple_radius     = 6.0;
+    bool      simple_falloff    = true;
+    double    simple_cold       = 0.0;
+    double    simple_hot        = 40.0;
+    double    simple_seconds    = 30.0;
+};
 
 struct PhysicsSettings {
     static constexpr double DEFAULT_TERMINAL_VELOCITY = 78.4;
 
     AirModel air_model         = AirModel::Keep;
     double   terminal_velocity = DEFAULT_TERMINAL_VELOCITY;
+    HeatSettings heat;
 
     std::shared_ptr<const AirResistance> air_resistance(double gravity, const std::shared_ptr<const AirResistance>& current) const {
         switch (air_model) {
@@ -602,13 +640,13 @@ struct WaterSettings {
     int          drop_search        = RealisticFluid::DEFAULT_DROP_SEARCH;
     bool         displacement       = false;
     DisplaceBy   displace_by        = DisplaceBy::Weight;
-    bool         splashes           = true;
+    bool         splashes           = false;
     double       splash             = 1.0;
     int          updates            = DEFAULT_UPDATES;
  
     WaveSettings waves;
  
-    bool         rain_fills         = true;
+    bool         rain_fills         = false;
     double       rain_fill          = 0.12;
     double       soak               = 0.25;
     double       evaporation        = 0.05;
@@ -632,8 +670,6 @@ struct WaterSettings {
         WaterSettings w;
         w.name          = STILL;
         w.flow          = FlowModel::Still;
-        w.waves.enabled = false;
-        w.rain_fills    = false;
         w.resistance    = FluidModel::Linear;
         w.current_speed = 0.0;
         w.current_push  = 0.0;
@@ -645,8 +681,6 @@ struct WaterSettings {
         WaterSettings w;
         w.name             = MINECRAFT;
         w.flow             = FlowModel::Minecraft;
-        w.waves.enabled    = false;
-        w.rain_fills       = false;
         w.resistance       = FluidModel::TickDamping;
         w.fall_break_depth = MINECRAFT_FALL_BREAK;
         return w;
@@ -654,9 +688,8 @@ struct WaterSettings {
  
     static WaterSettings flowing() {
         WaterSettings w;
-        w.name       = FLOWING;
-        w.flow       = FlowModel::Minecraft;
-        w.rain_fills = false;
+        w.name = FLOWING;
+        w.flow = FlowModel::Minecraft;
         return w;
     }
  
@@ -672,7 +705,6 @@ struct WaterSettings {
         w.realistic_interval = ULTRA_INTERVAL;
         w.min_depth          = ULTRA_MIN_DEPTH;
         w.drop_search        = RealisticFluid::MAX_DROP_SEARCH;
-        w.displacement       = true;
         w.updates            = ULTRA_UPDATES;
         w.wade_slowdown      = ULTRA_WADE;
         return w;
@@ -794,15 +826,13 @@ enum class Season          : std::uint8_t { Spring = 0, Summer, Autumn, Winter }
 enum class WeatherMode     : std::uint8_t { Changing = 0, AlwaysClear, AlwaysRain, AlwaysStorm };
 enum class RainStyle       : std::uint8_t { Realistic = 0, Simple };
 enum class TemperatureUnit : std::uint8_t { Celsius = 0, Fahrenheit };
-
+ 
 struct Seasons {
     static constexpr int COUNT = 4;
-
     static constexpr std::array<const char*, COUNT> NAMES{ "Spring", "Summer", "Autumn", "Winter" };
-
     static const char* name(Season s) noexcept { return NAMES[static_cast<std::size_t>(s)]; }
 };
-
+ 
 struct SeasonSettings {
     SeasonMode mode              = SeasonMode::Cycle;
     Season     fixed_season      = Season::Summer;
@@ -811,12 +841,12 @@ struct SeasonSettings {
     int        months_per_season = 3;
     double     sun_swing         = 23.4;
     double     temperature       = 1.0;
-
+ 
     int    days_per_season() const noexcept { return days_per_month * months_per_season; }
     int    days_per_year()   const noexcept { return days_per_season() * Seasons::COUNT; }
     int    months_per_year() const noexcept { return months_per_season * Seasons::COUNT; }
 };
-
+ 
 struct TemperatureSettings {
     bool   daily_change    = true;
     double daily_strength  = 1.0;
@@ -824,11 +854,18 @@ struct TemperatureSettings {
     double offset          = 0.0;
     double weather_cooling = 4.0;
     double cloud_damping   = 0.6;
+    double climate_mix     = 0.5;
+    double blend_distance  = 40.0;
+    double local_variation = 2.0;
+    double local_size      = 12.0;
+    double drift           = 3.0;
+    double drift_size      = 320.0;
+    double drift_speed     = 0.8;
 };
-
+ 
 struct WeatherSettings {
     static constexpr std::size_t SEASON_COUNT = Seasons::COUNT;
-
+ 
     WeatherMode mode            = WeatherMode::Changing;
     RainStyle   style           = RainStyle::Realistic;
     double      clear_days      = 1.2;
@@ -848,17 +885,19 @@ struct WeatherSettings {
     double      wind            = 1.0;
     double      showers         = 0.35;
     double      shower_hours    = 3.0;
+    double      shower_size     = 160.0;
+    double      rain_fade       = 8.0;
     std::array<double, SEASON_COUNT> season_rain{ 1.3, 0.9, 1.1, 1.0 };
     TemperatureSettings temperature;
 };
-
+ 
 struct WeatherViewSettings {
     bool            precipitation = true;
     double          amount        = 1.0;
     int             max_drops     = 6000;
     double          radius        = 22.0;
     bool            flashes       = true;
-    TemperatureUnit unit          = TemperatureUnit::Celsius;
+    TemperatureUnit unit          = TemperatureUnit::Fahrenheit;
 };
 
 struct BiomeOptions {
@@ -966,7 +1005,6 @@ struct GameSettings {
     SeasonSettings      seasons;
     WeatherSettings     weather;
     WeatherViewSettings weather_view;
-    DynamicLight        hand_light = DynamicLight::glow(Color(255, 190, 120), 11.0, true);
     ParticleSettings    particles;
     CameraSettings      camera;
     DisplaySettings     display;

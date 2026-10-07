@@ -28,17 +28,6 @@ inline const Identifier ICE       = block("ice");
 inline const Identifier GLASS     = block("glass");
 inline const Identifier WATER     = block("water");
 
-inline constexpr const char* LAMP   = "lamp";
-inline constexpr const char* MIRROR = "mirror";
-
-inline Identifier lamp(std::string_view color) { return block({ LAMP, color }); }
-inline Identifier mirror(Face facing)          { return block({ MIRROR, face_name(facing) }); }
-
-inline const Identifier WARM_LAMP  = lamp("warm");
-inline const Identifier BLUE_LAMP  = lamp("blue");
-inline const Identifier RED_LAMP   = lamp("red");
-inline const Identifier GREEN_LAMP = lamp("green");
-
 } // namespace BlockIds
 
 } // namespace voxelspire

@@ -183,9 +183,9 @@ private:
 
         const BiomeClimate climate = biome.climate();
         p.header("Weather");
-        optional_number(p, "Average temperature", "The average temperature here at sea level, across a whole day and year.", BL::temperature, climate.temperature, get, edit, tidy, &BiomeOptions::mean_temperature).unit("C").decimals(1);
-        optional_number(p, "Day and night swing", "How much warmer the afternoon is than the night. Deserts swing a lot.", BL::swing, climate.daily_swing, get, edit, tidy, &BiomeOptions::daily_swing).unit("C").decimals(1);
-        optional_number(p, "Summer and winter swing", "How much warmer summer is than winter.", BL::swing, climate.season_swing, get, edit, tidy, &BiomeOptions::season_swing).unit("C").decimals(1);
+        optional_number(p, "Average temperature", "The average temperature here at sea level, across a whole day and year.", BL::temperature, climate.temperature, get, edit, tidy, &BiomeOptions::mean_temperature).celsius().decimals(1);
+        optional_number(p, "Day and night swing", "How much warmer the afternoon is than the night. Deserts swing a lot.", BL::swing, climate.daily_swing, get, edit, tidy, &BiomeOptions::daily_swing).celsius_change().decimals(1);
+        optional_number(p, "Summer and winter swing", "How much warmer summer is than winter.", BL::swing, climate.season_swing, get, edit, tidy, &BiomeOptions::season_swing).celsius_change().decimals(1);
         optional_number(p, "Rain amount", "How much rain or snow falls here. 1 is normal, 0 is completely dry, and above 1 brings heavier rain and extra showers.", BL::rainfall, climate.rainfall, get, edit, tidy, &BiomeOptions::rainfall).unit("x");
         optional_number(p, "Wave size", "How big waves get on water here. Oceans have 1, small lakes and rivers much less.", BL::waves, climate.waves, get, edit, tidy, &BiomeOptions::waves).unit("x");
         p.always();

@@ -110,6 +110,7 @@ public:
     }
 
     const Biome* biome_at(int x, int y) const override { return &m_biomes.at(column_at(x, y).biome); }
+    std::optional<double> climate_temperature(int x, int y) const override { return m_shaper.sea_level_temperature(x, y); }
 
 private:
     struct Surface {

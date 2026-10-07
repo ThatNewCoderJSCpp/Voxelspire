@@ -40,26 +40,8 @@ public:
 
     bool despawns_in_void() const noexcept override { return false; }
 
-    static constexpr double HAND_FORWARD = 0.45;
-    static constexpr double HAND_DROP    = 0.35;
-
-    void set_hand_light(const DynamicLight* light) {
-        m_has_hand_light = light != nullptr;
-        if (light) m_hand_light = *light;
-    }
-
-    bool has_hand_light() const noexcept { return m_has_hand_light; }
-    const DynamicLight& hand_light() const noexcept { return m_hand_light; }
-
     bool casts_capsule_shadow(fizmo::graphics::CapsuleOccluder3D& out, double alpha) const override {
         out = fizmo::graphics::CapsuleOccluder3D::standing(interpolated_position(alpha), height(), capsule_radius());
-        return true;
-    }
-
-    bool emits_light(DynamicLight& out, double alpha) const override {
-        if (!m_has_hand_light) return false;
-        out = m_hand_light;
-        out.position = eye_position(alpha) + flat_forward() * HAND_FORWARD - vector3d{ 0.0, 0.0, HAND_DROP };
         return true;
     }
 
@@ -180,8 +162,6 @@ private:
     Identifier                  m_pose = Poses::Standing;
     double                      m_eye_height;
     double                      m_prev_eye_height;
-    DynamicLight                m_hand_light;
-    bool                        m_has_hand_light = false;
     bool                        m_was_submerged  = false;
     vector3d                    m_drift{};
 };

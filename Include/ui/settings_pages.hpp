@@ -69,8 +69,8 @@ public:
     static void register_world(SettingsRegistry& registry, const SettingsHooks& hooks, const WaterPresets& water_presets) {
         const WaterPresets* waters = &water_presets;
         registry.set_group(SettingsGroups::GAMEPLAY);
-        registry.add_tab(SettingsTabs::CHARACTER, "Character", "Body size, movement speeds and the hand light", character);
-        registry.add_tab(SettingsTabs::PHYSICS, "Physics", "Gravity, air resistance and entity pushing", physics);
+        registry.add_tab(SettingsTabs::CHARACTER, "Character", "Body size, clothing and movement speeds", character);
+        registry.add_tab(SettingsTabs::PHYSICS, "Physics", "Gravity, air resistance, body heat and entity pushing", physics);
         registry.add_tab(SettingsTabs::WATER, "Water", "Presets, how water flows, swimming and wading", [waters](SettingsPage& p) { water(p, *waters); });
         registry.set_group(SettingsGroups::SKY);
         registry.add_tab(SettingsTabs::TIME, "Time & Sky", "Day length, tick rate, sun path and sky colors", [hooks](SettingsPage& p) { time(p, hooks); });
@@ -154,15 +154,14 @@ private:
     static void character(SettingsPage& p) {
         using C  = CharacterSettings;
         using CL = CharacterLimits;
-        using DL = DynamicLightLimits;
         auto c = [](double C::*m) { return field(&GameSettings::character, m); };
-        auto hand = [](auto DynamicLight::*m) { return field(&GameSettings::hand_light, m); };
 
         p.header("Body").applies(Apply::Character);
         p.decimal("Width", "How wide the player is.", c(&C::width), CL::width).unit("blocks");
         p.decimal("Reach", "How far away you can target blocks.", c(&C::reach), CL::reach).unit("blocks").decimals(1);
         p.applies(Apply::Character | Apply::Physics);
         p.decimal("Body mass", "How heavy you are. Heavier bodies are slowed less by water and, with displacement by weight, push aside more water.", c(&C::mass), CL::mass).unit("kg").decimals(1);
+        p.decimal("Clothing", "How warmly you are dressed, in layers. 1 is normal clothes, 0 is almost nothing, higher keeps out more cold but makes heat worse. Worn items add to this.", c(&C::clothing), CL::clothing).unit("layers").decimals(1);
         p.applies(Apply::Character);
         p.decimal("Standing height", "Height while standing.", c(&C::standing_height), CL::standing_height).unit("blocks");
         p.decimal("Crouching height", "Height while crouching.", c(&C::crouching_height), CL::crouching_height).unit("blocks");
@@ -208,14 +207,6 @@ private:
         p.header("Flying");
         p.decimal("Vertical fly speed", "Up and down speed of a flying mode, if one is enabled.", c(&C::fly_vertical_speed), CL::fly_vertical_speed).unit("b/s");
         p.decimal("Vertical fly acceleration", "How quickly flying up and down changes.", c(&C::fly_vertical_accel), CL::fly_vertical_accel).unit("b/s2").decimals(1);
-
-        p.header("Hand light").applies(Apply::HandLight);
-        p.color("Color", "Color of the light you carry.", hand(&DynamicLight::color));
-        p.decimal("Brightness", "How strong the hand light is.", hand(&DynamicLight::intensity), DL::intensity);
-        p.decimal("Radius", "How far the hand light reaches.", hand(&DynamicLight::radius), DL::radius).unit("blocks").decimals(1);
-        p.integer("Light level", "Light level it counts as for gameplay.", hand(&DynamicLight::level), DL::level);
-        p.toggle("Counts as light", "Whether the hand light raises the light level used by gameplay.", hand(&DynamicLight::affects_light_level));
-        p.toggle("Casts shadows", "Whether the hand light casts shadows (needs point shadows).", hand(&DynamicLight::casts_shadows));
     }
 
     static void physics(SettingsPage& p) {
@@ -226,6 +217,9 @@ private:
         GameSettings* g = &p.live();
         auto ph = [](auto P::*m) { return field(&GameSettings::physics, m); };
         auto ent = [](auto EntitySettings::*m) { return field(&GameSettings::entities, m); };
+        auto heat = [](auto HeatSettings::*m) { return field(&GameSettings::physics, &PhysicsSettings::heat, m); };
+        using H  = HeatSettings;
+        using HL = HeatLimits;
 
         p.header("Gravity").applies(Apply::Physics);
         p.decimal("Gravity", "How fast things fall. Earth-like is about 32 in blocks.", field(&GameSettings::world, &WorldSettings::gravity), WL::gravity).unit("b/s2").decimals(1);
@@ -241,6 +235,52 @@ private:
 
         p.when([g] { const AirModel m = g->physics.air_model; return m == AirModel::TerminalCap || m == AirModel::Linear || m == AirModel::Quadratic; });
         p.decimal("Terminal velocity", "Top falling speed in air.", ph(&P::terminal_velocity), PL::terminal_velocity).unit("b/s").decimals(1);
+
+        p.always().header("Heat").applies(Apply::Nothing);
+        p.choice("Heat", "How heat works in the world. Realistic: heat from warm blocks and lights spreads out, fades with distance and is held back by the blocks in the way, and your body trades heat with the air, water and ground around you. Simple works like Minecraft: anything warm within a set distance counts, and a cold meter fills at a steady rate. Off turns heat off everywhere.",
+                 heat(&H::model), { "Off", "Simple", "Realistic" });
+        p.when([g] { return g->physics.heat.model != HeatModel::Off; });
+        p.toggle("Heat affects the player", "Whether your body warms up and cools down. Turn off to keep heat in the world without it affecting you.", heat(&H::affects_player));
+        p.decimal("Heat source strength", "How strongly warm blocks, lights and other heat sources warm things. Stronger heat also reaches further.", heat(&H::source_strength), HL::strength).unit("x");
+
+        p.when([g] { return g->physics.heat.model == HeatModel::Realistic; });
+        p.decimal("Faintest warmth", "Heat keeps spreading until its warmth fades below this, so hotter sources reach further and weak ones stay close. Blocks in the way hold some of it back.", heat(&H::faintest_warmth), HL::faintest).celsius_change().decimals(2).logarithmic();
+        p.decimal("Walls hold back heat", "Scales how much heat each block in the way holds back. Each block has its own insulation: snow and dirt hold back a lot, glass very little. 1 uses them as they are, 0 lets heat pass through everything.", heat(&H::insulation_scale), HL::insulation).unit("x");
+
+        p.when([g] { return g->physics.heat.model == HeatModel::Simple; });
+        p.decimal("Warmth distance", "How far heat goes. Heat sources warm you within this many blocks and not at all past it, whatever blocks are in the way.", heat(&H::simple_radius), HL::simple_radius).unit("blocks").decimals(1);
+        p.toggle("Fade with distance", "On: warmth gets weaker the further you are, down to nothing at the warmth distance. Off: full warmth anywhere inside the distance, like standing next to the source.", heat(&H::simple_falloff));
+
+        p.when([g] { return g->physics.heat.model != HeatModel::Off && g->physics.heat.affects_player; });
+        p.header("Body heat");
+        p.toggle("Cold and heat slow you", "Being cold, freezing, hot or overheating slows you down.", heat(&H::effects));
+        p.decimal("Degrees per clothing layer", "How many degrees colder you can stand for each extra layer of clothing, and how much hotter you feel.", heat(&H::clothing_degrees), HL::clothing).celsius_change().decimals(1);
+
+        p.when([g] { return g->physics.heat.model == HeatModel::Simple && g->physics.heat.affects_player; });
+        p.decimal("Cold below", "The cold meter fills when it feels colder than this.", heat(&H::simple_cold), HL::threshold).celsius().decimals(1);
+        p.decimal("Hot above", "The heat meter fills when it feels hotter than this.", heat(&H::simple_hot), HL::threshold).celsius().decimals(1);
+        p.decimal("Time to freeze", "How long it takes to go from comfortable to freezing, or to overheating.", heat(&H::simple_seconds), HL::seconds).unit("s").logarithmic();
+
+        p.when([g] { return g->physics.heat.model == HeatModel::Realistic && g->physics.heat.affects_player; });
+        p.decimal("Normal body temperature", "Your body's normal temperature, which it returns to when comfortable.", heat(&H::normal_body), HL::body).celsius().decimals(1);
+        p.decimal("Comfortable from", "In still air with normal clothes, feeling colder than this slowly cools your body.", heat(&H::comfort_low), HL::comfort).celsius().decimals(1);
+        p.decimal("Comfortable up to", "In still air with normal clothes, feeling hotter than this slowly heats your body.", heat(&H::comfort_high), HL::comfort).celsius().decimals(1);
+        p.decimal("Heat exchange", "How fast your body changes temperature in still air: body degrees per minute for every degree it feels outside comfortable. Water, wind, rain and the ground make this faster.", heat(&H::exchange_rate), HL::rate).unit("per min").decimals(3);
+        p.decimal("Water", "How many times faster you trade heat with water than with still air.", heat(&H::water_exchange), HL::exchange).unit("x").decimals(1);
+        p.decimal("Wind", "How much faster you lose or gain heat for each block per second of wind, out in the open.", heat(&H::wind_exchange), HL::exchange).unit("x").decimals(2);
+        p.decimal("Rain and snow", "How much faster you lose or gain heat in heavy rain or snow, out in the open.", heat(&H::rain_exchange), HL::exchange).unit("x").decimals(2);
+        p.decimal("Ground", "How much the blocks you stand on matter. Each block conducts heat differently: stone and ice draw heat away faster than dirt or snow.", heat(&H::ground_exchange), HL::exchange).unit("x").decimals(2);
+        p.decimal("Recovery speed", "How fast your body returns to normal when comfortable.", heat(&H::recovery_rate), HL::recovery_rate).unit("C/min").also_in("F/min", AltUnit::FAHRENHEIT_SCALE).decimals(2);
+        p.decimal("Cold at", "Your body counts as cold at or below this temperature.", heat(&H::cold_body), HL::body).celsius().decimals(1);
+        p.decimal("Freezing at", "Your body counts as freezing at or below this temperature.", heat(&H::freezing_body), HL::body).celsius().decimals(1);
+        p.decimal("Hot at", "Your body counts as hot at or above this temperature.", heat(&H::hot_body), HL::body).celsius().decimals(1);
+        p.decimal("Overheating at", "Your body counts as overheating at or above this temperature.", heat(&H::overheating_body), HL::body).celsius().decimals(1);
+
+        p.when([g] { return g->physics.heat.model != HeatModel::Off && g->physics.heat.affects_player && g->physics.heat.effects; });
+        p.decimal("Speed when cold", "How fast you move while cold, compared to normal.", heat(&H::cold_speed), HL::speed).unit("x");
+        p.decimal("Speed when freezing", "How fast you move while freezing.", heat(&H::freezing_speed), HL::speed).unit("x");
+        p.decimal("Speed when hot", "How fast you move while hot.", heat(&H::hot_speed), HL::speed).unit("x");
+        p.decimal("Speed when overheating", "How fast you move while overheating.", heat(&H::overheating_speed), HL::speed).unit("x");
 
         p.always().header("Entities").applies(Apply::Entities);
         p.decimal("Push strength", "How hard overlapping entities push each other apart.", ent(&EntitySettings::push_acceleration), EL::push_acceleration).unit("b/s2").decimals(1);
@@ -470,7 +510,9 @@ private:
         p.decimal("Hail chance", "Chance that a warm storm brings hail.", w(&W::hail_chance), WL::chance);
         p.decimal("Rainy biome showers", "Extra showers in biomes with more rain than normal, like jungles and swamps, even when the rest of the world is dry. 0 turns them off.", w(&W::showers), WL::showers).unit("x");
         p.decimal("Shower length", "About how long each shower lasts.", w(&W::shower_hours), WL::shower_hours).unit("h").decimals(1);
+        p.decimal("Shower size", "About how wide each shower is. You can walk out from under a shower into dry weather.", w(&W::shower_size), WL::shower_size).unit("blocks").logarithmic();
         p.decimal("Change speed", "How long the weather takes to clear up or set in.", w(&W::change_hours), WL::change_hours).unit("h").decimals(1);
+        p.decimal("Rain fade", "How many real seconds rain or snow takes to start or stop where you are, like walking into or out of a shower. 0 starts and stops instantly.", w(&W::rain_fade), WL::rain_fade).unit("s").decimals(1);
 
         p.header("Rain through the year");
         p.when([g] { return g->weather.mode == WeatherMode::Changing && g->seasons.mode != SeasonMode::Off; });
@@ -488,10 +530,10 @@ private:
         }
 
         p.always().header("Rain, snow and ice");
-        p.decimal("Snow below", "Rain turns to snow at or below this temperature.", w(&W::snow_below), WL::threshold).unit("C").decimals(1);
+        p.decimal("Snow below", "Rain turns to snow at or below this temperature.", w(&W::snow_below), WL::threshold).celsius().decimals(1);
         p.when([g] { return g->weather.style == RainStyle::Realistic; });
-        p.decimal("Sleet below", "Between freezing and this temperature, rain falls as sleet. Just below freezing it falls as freezing rain.", w(&W::sleet_below), WL::threshold).unit("C").decimals(1);
-        p.decimal("Hail above", "Storms can only bring hail at or above this temperature.", w(&W::hail_above), WL::threshold).unit("C").decimals(1);
+        p.decimal("Sleet below", "Between freezing and this temperature, rain falls as sleet. Just below freezing it falls as freezing rain.", w(&W::sleet_below), WL::threshold).celsius().decimals(1);
+        p.decimal("Hail above", "Storms can only bring hail at or above this temperature.", w(&W::hail_above), WL::threshold).celsius().decimals(1);
         p.always();
         p.decimal("Dry biomes", "Biomes with less rain than this only get clouds, never rain or snow. Deserts are dry by default.", w(&W::dry_below), WL::dry_below);
 
@@ -510,9 +552,22 @@ private:
         p.decimal("Day and night swing", "How big the difference between day and night is. 1 is normal.", t(&T::daily_strength), TL::daily_strength).unit("x");
         p.decimal("Clouds even it out", "How much clouds shrink the difference between day and night.", t(&T::cloud_damping), TL::cloud_damping);
         p.always();
-        p.decimal("Cooling with height", "How much colder it gets for every 10 blocks above sea level, so tall peaks are freezing.", t(&T::altitude_drop), TL::altitude_drop).unit("C").decimals(2);
-        p.decimal("Rain cooling", "How much colder it gets in heavy rain or snow.", t(&T::weather_cooling), TL::weather_cooling).unit("C").decimals(1);
-        p.decimal("Warmer or colder", "Makes the whole world warmer or colder.", t(&T::offset), TL::offset).unit("C").decimals(1);
+        p.decimal("Cooling with height", "How much colder it gets for every 10 blocks above sea level, so tall peaks are freezing.", t(&T::altitude_drop), TL::altitude_drop).celsius_change().decimals(2);
+        p.decimal("Rain cooling", "How much colder it gets in heavy rain or snow.", t(&T::weather_cooling), TL::weather_cooling).celsius_change().decimals(1);
+        p.decimal("Warmer or colder", "Makes the whole world warmer or colder.", t(&T::offset), TL::offset).celsius_change().decimals(1);
+
+        p.header("Temperature across the land");
+        p.decimal("Follow the climate map", "How much temperature follows the world's smooth hot-to-cold climate map instead of each biome's average. 0 uses biome averages only, 1 uses the climate map only.", t(&T::climate_mix), TL::climate_mix);
+        p.decimal("Biome blending", "How far around you nearby biomes are mixed in, so temperature changes gradually across biome borders. 0 uses only the biome you are in.", t(&T::blend_distance), TL::blend_distance).unit("blocks");
+        p.decimal("Small changes nearby", "How many degrees the temperature can differ between spots a few blocks apart.", t(&T::local_variation), TL::local_variation).celsius_change().decimals(1);
+        p.when([g] { return g->weather.temperature.local_variation > 0.0; });
+        p.decimal("Size of small changes", "Roughly how far apart the warmer and cooler spots are.", t(&T::local_size), TL::local_size).unit("blocks").logarithmic();
+        p.always();
+        p.decimal("Passing warm and cold air", "How many degrees warmer or colder big drifting air masses can make a whole area.", t(&T::drift), TL::drift).celsius_change().decimals(1);
+        p.when([g] { return g->weather.temperature.drift > 0.0; });
+        p.decimal("Air mass size", "Roughly how wide each warm or cold air mass is.", t(&T::drift_size), TL::drift_size).unit("blocks").logarithmic();
+        p.decimal("Air mass speed", "How quickly warm and cold air masses come and go. Higher changes faster.", t(&T::drift_speed), TL::drift_speed).unit("per day").decimals(1);
+        p.always();
     }
 
     static void celestial(SettingsPage& p) {
@@ -715,9 +770,10 @@ private:
         p.toggle("Smooth movement", "Blend between shadow updates so they move smoothly instead of jumping.", l(&L::shadow_crossfade));
 
         p.always().header("Lamp shadows");
-        p.toggle("Lamp shadows", "Shadows from lamps and your hand light (needs lamp lights or dynamic lights).", l(&L::point_shadows));
+        p.toggle("Lamp shadows", "Shadows from glowing blocks and moving lights (needs lamp lights or dynamic lights).", l(&L::point_shadows));
         p.when([g] { return g->lighting.point_shadows; });
         p.integer("Shadowed lamps", "How many of the nearest lamps cast shadows.", l(&L::max_point_shadows), LL::max_point_shadows);
+        p.integer("Moving light shadow updates", "How many shadow faces moving lights like flashlights may redraw each frame. Lights over the budget keep their last shadow for a frame. Still lamps only redraw when something near them changes.", l(&L::moving_shadow_faces), LL::moving_shadow_faces);
         power_choice(p, "Lamp shadow resolution", "Sharpness of lamp shadows.", &L::point_shadow_resolution, { 256u, 512u, 768u, 1024u, 2048u });
         p.decimal("Shadow fade", "Distance over which lamp shadows fade in and out.", l(&L::point_shadow_fade), LL::point_shadow_fade).unit("blocks").decimals(1);
         p.toggle("Hide lamps without shadows", "Lamps that don't get a shadow don't shine, so light can't leak through walls.", l(&L::hide_unshadowed_point_lights));

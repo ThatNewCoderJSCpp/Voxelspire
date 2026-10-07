@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -28,6 +29,7 @@ public:
     virtual vector3d spawn_point(const World& world) const = 0;
     virtual ColumnPos spawn_column() const { return { 0, 0 }; }
     virtual const Biome* biome_at(int, int) const { return nullptr; }
+    virtual std::optional<double> climate_temperature(int, int) const { return std::nullopt; }
 
     virtual std::vector<std::unique_ptr<Chunk>> generate_column(const ColumnPos& col, int min_chunk_z, int max_chunk_z) const {
         std::vector<std::unique_ptr<Chunk>> out;

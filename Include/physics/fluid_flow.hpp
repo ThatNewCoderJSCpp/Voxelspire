@@ -295,6 +295,12 @@ public:
     void update(FluidAccess& f, const BlockPos& p) const override {
         if (!f.same(p)) return;
         if (sea_exchange(f, p)) return;
+        flow(f, p);
+        if (keeps_full(f, p)) f.put(p, state_for(UNITS));
+    }
+
+private:
+    void flow(FluidAccess& f, const BlockPos& p) const {
         int mass = units(f.state(p));
         if (m_displace) mass = overflow(f, p, mass);
         if (mass == 0) return;
@@ -304,8 +310,9 @@ public:
 
         if (room > 0) {
             const int move = vmin(mass, room);
+            const bool free_fall = m_splash > 0.0 && (!f.same(below) || !surrounded(f, p));
             f.put(below, state_for(mass_in(f, below) + move));
-            if (m_splash > 0.0) f.set_speed(below, vmax(f.speed(below), speed + 1.0));
+            if (free_fall) f.set_speed(below, vmax(f.speed(below), speed + 1.0));
             mass -= move;
             store(f, p, mass);
             if (mass == 0) return;
@@ -322,7 +329,6 @@ public:
         if (m_search > 0 && settled == mass && mass <= THIN_FACTOR * m_min_units) drain(f, p, mass);
     }
 
-private:
     static constexpr double MIN_INTERVAL    = 0.01;
     static constexpr int    WINDOW          = 2 * MAX_DROP_SEARCH + 1;
     static constexpr int    NO_SIDE         = -1;
@@ -333,6 +339,17 @@ private:
 
     bool open_sea(FluidAccess& f, const BlockPos& q) const {
         return q.z == m_sea && f.same(q) && f.same(offset(q, DOWN));
+    }
+
+    static bool surrounded(FluidAccess& f, const BlockPos& p) {
+        for (const BlockPos& d : SIDES) if (!f.same(offset(p, d))) return false;
+        return true;
+    }
+
+    bool keeps_full(FluidAccess& f, const BlockPos& p) const {
+        if (m_sea == NO_SEA || p.z != m_sea || !f.same(offset(p, DOWN))) return false;
+        if (!f.same(p) && !f.open(p)) return false;
+        return mass_in(f, p) < UNITS && capacity(occupancy(f, p)) >= UNITS;
     }
 
     bool sea_exchange(FluidAccess& f, const BlockPos& p) const {

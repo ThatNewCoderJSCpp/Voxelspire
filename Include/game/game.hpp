@@ -12,6 +12,7 @@
 #include <vector>
 #include "../block/blocks.hpp"
 #include "../camera/game_camera.hpp"
+#include "../core/process_memory.hpp"
 #include "../core/settings.hpp"
 #include "../entity/entity_manager.hpp"
 #include "../entity/player.hpp"
@@ -19,6 +20,7 @@
 #include "../lighting/director.hpp"
 #include "../core/presets.hpp"
 #include "../lighting/world_light.hpp"
+#include "../physics/heat.hpp"
 #include "../particles/system.hpp"
 #include "../render/block_outline_renderer.hpp"
 #include "../render/capsule_renderer.hpp"
@@ -36,6 +38,7 @@
 #include "../world/fluid_simulator.hpp"
 #include "../world/water_weather.hpp"
 #include "../world/world_save.hpp"
+#include "../weather/climate_field.hpp"
 #include "../weather/precipitation.hpp"
 #include "../weather/sky_weather.hpp"
 
@@ -72,6 +75,8 @@ public:
           m_capsule(make_capsule(settings.render)) {
         m_world.attach_lighting(make_light_engine(m_world, m_settings.world.light_format));
         m_world.set_wave_sampler([this](double x, double y) { return m_waves.at(x, y, wave_scale_at(x, y)); });
+        m_climate_field = ClimateField(m_settings.world.seed);
+        m_body_heat.reset(m_settings.physics.heat);
         m_lighting.configure(m_settings.lighting);
         m_celestial.configure(m_settings.celestial);
         m_terrain.configure(m_settings.render, m_settings.streaming, m_settings.lod, m_settings.lighting);
@@ -217,6 +222,7 @@ public:
         m_cpu_frame.streaming = ms_between(streaming_start, light_start) + ms_between(terrain_start, Clock::now());
         m_particles.update(frame_dt, m_camera.camera().position(), m_world, m_world.settings().gravity);
         update_weather(frame_dt, playing || !m_settings.menu.pause_game);
+        scan_heat(frame_dt);
         m_target = raycast_blocks(m_world, m_player->eye_position(m_alpha), m_player->look_direction(), m_player->attributes().value(Attributes::BlockReach));
         m_camera.update(*m_player, m_world, m_alpha, frame_dt);
         m_cpu_frame.update = ms_between(update_start, Clock::now());
@@ -297,6 +303,7 @@ public:
 
     void track_gpu(fizmo::windows::Renderer& renderer) {
         renderer.set_gpu_timing(m_settings.hud.show_debug && m_settings.hud.sections.gpu);
+        if (m_settings.hud.show_debug) m_gpu_memory = renderer.gpu_memory();
         const fizmo::windows::GpuTimings t = renderer.gpu_timings();
         if (!t.valid) return;
         m_gpu_sum.valid = true;
@@ -399,11 +406,6 @@ public:
         if (groups & Apply::Particles)   m_particles.settings() = m_settings.particles;
         if (groups & Apply::Entities)    m_entities.settings() = m_settings.entities;
         if (groups & Apply::Player)      m_capsule = make_capsule(m_settings.render);
-
-        if ((groups & Apply::HandLight) && m_player->has_hand_light()) {
-            const DynamicLight light = m_settings.hand_light;
-            m_player->set_hand_light(&light);
-        }
     }
 
     HudInfo hud_info(double fps_average) const {
@@ -442,6 +444,15 @@ public:
         info.weather             = weather_text();
         info.water_weather       = water_weather_text();
         info.temperature         = m_local_weather.temperature;
+        info.heat_on             = m_settings.physics.heat.model != HeatModel::Off;
+        info.body_temperature    = m_body_heat.body();
+        info.felt_temperature    = m_heat_reading.felt;
+        info.heat_warmth         = m_heat_reading.sources;
+        info.heat_surround       = m_heat_reading.surround;
+        info.heat_exchange       = m_heat_reading.exchange;
+        info.heat_player         = m_settings.physics.heat.affects_player;
+        info.clothing            = m_gear.insulation;
+        info.body_state          = body_state_name(m_body_heat.state(m_settings.physics.heat));
         info.temperature_unit    = m_settings.weather_view.unit;
         info.day_cycle           = m_settings.day_cycle.enabled;
         info.light_here          = light_level_at(m_player->eye_position(m_alpha));
@@ -455,6 +466,8 @@ public:
         info.fluids              = m_fluids.stats();
         info.reflection_planes   = m_reflections.planes().size();
         info.gpu                 = average_gpu();
+        info.vram                = m_gpu_memory;
+        info.ram                 = ProcessMemory::read();
         return info;
     }
 
@@ -470,11 +483,6 @@ public:
 
     void cycle_lighting() {
         if (const LightingSettings* next = m_presets.next(m_settings.lighting.name)) set_lighting(*next);
-    }
-
-    void toggle_hand_light() {
-        const DynamicLight torch = m_settings.hand_light;
-        m_player->set_hand_light(m_player->has_hand_light() ? nullptr : &torch);
     }
 
     WeatherSystem&      weather()       noexcept       { return m_weather; }
@@ -563,21 +571,11 @@ private:
             m_player->add_look(-input.mouse_delta_x() * sens, -input.mouse_delta_y() * sens * invert);
         }
 
-        const double hour = 1.0 / DayCycleSettings::HOURS_PER_DAY;
         if (keys.just_pressed(input, Action::CycleCamera))        m_camera.cycle_rig();
         if (keys.just_pressed(input, Action::ToggleHud))          m_settings.hud.show_debug = !m_settings.hud.show_debug;
-        if (keys.just_pressed(input, Action::CycleHudCorner))     m_settings.hud.corner = Hud::next_corner(m_settings.hud.corner);
-        if (keys.just_pressed(input, Action::HudLarger))          m_settings.hud.scale = Hud::stepped_scale(m_settings.hud.scale, 1);
-        if (keys.just_pressed(input, Action::HudSmaller))         m_settings.hud.scale = Hud::stepped_scale(m_settings.hud.scale, -1);
-        if (keys.just_pressed(input, Action::Respawn))            respawn_player();
         if (keys.just_pressed(input, Action::RenderDistanceUp))   set_render_distance(m_settings.render.render_distance + m_settings.render.render_distance_step);
         if (keys.just_pressed(input, Action::RenderDistanceDown)) set_render_distance(m_settings.render.render_distance - m_settings.render.render_distance_step);
         if (keys.just_pressed(input, Action::CycleLighting))      cycle_lighting();
-        if (keys.just_pressed(input, Action::ToggleHandLight))    toggle_hand_light();
-        if (keys.just_pressed(input, Action::TimeForward))        m_clock.add(hour);
-        if (keys.just_pressed(input, Action::TimeBackward))       m_clock.add(-hour);
-        if (keys.just_pressed(input, Action::ToggleDayCycle))     m_settings.day_cycle.enabled = !m_settings.day_cycle.enabled;
-        if (keys.just_pressed(input, Action::CycleWeather))       m_weather.cycle(m_settings.weather, m_weather_rng);
     }
 
     void act(PauseAction action) {
@@ -658,6 +656,69 @@ private:
     void respawn_player() {
         m_streamer.load_now(columns_around(m_generator->spawn_column(), 1));
         m_player->respawn(m_generator->spawn_point(m_world));
+        m_body_heat.reset(m_settings.physics.heat);
+    }
+
+    void touching_ground(HeatEnvironment& e) const {
+        if (!m_player->on_ground()) return;
+        const vector3d p = m_player->position();
+        const double half = m_player->width() * HALF;
+        double temperature = 0.0, conductivity = 0.0;
+        int count = 0;
+
+        for (const double dx : { -half, half })
+            for (const double dy : { -half, half }) {
+                const BlockPos below = BlockPos::containing(p + vector3d{ dx, dy, -GROUND_PROBE });
+                const BlockTraits& t = m_world.traits_at(below);
+                if (!t.solid) continue;
+                temperature  += t.thermal.surface(e.air);
+                conductivity += t.thermal.conductivity;
+                ++count;
+            }
+
+        if (count == 0) return;
+        e.touching     = true;
+        e.ground       = temperature / count;
+        e.conductivity = conductivity / count;
+    }
+
+    void scan_heat(double frame_dt) {
+        m_heat_scan -= frame_dt;
+        if (m_heat_scan > 0.0) return;
+        m_heat_scan = HeatSensor::SCAN_INTERVAL;
+        m_heat_sensor.scan(m_world, m_player->position(), m_settings.physics.heat);
+    }
+
+    HeatGearRegistry&       heat_gear()       noexcept { return m_heat_gear; }
+    const HeatGearRegistry& heat_gear() const noexcept { return m_heat_gear; }
+
+    double temperature_at(const vector3d& p) const {
+        return m_local_weather.temperature + HeatSensor::measure(m_world, p, m_frame_lights, m_settings.physics.heat);
+    }
+
+    void update_body_heat(double dt) {
+        const HeatSettings& s = m_settings.physics.heat;
+        const vector3d center = m_player->position() + vector3d{ 0.0, 0.0, m_player->height() * HALF };
+        const BlockPos cell = BlockPos::containing(center);
+        HeatGear base;
+        base.insulation = m_settings.character.clothing;
+        m_gear = m_heat_gear.total(*m_player, base);
+        HeatEnvironment e;
+        e.air       = m_local_weather.temperature;
+        e.sources   = m_heat_sensor.warmth(m_world, center, m_frame_lights, s);
+        e.wind      = m_wind.magnitude();
+        e.rain      = m_local_weather.precipitation == Precipitation::None ? 0.0 : vmin(m_local_weather.amount, 1.0);
+        e.open_sky  = static_cast<double>(m_world.light_at(cell).sky) / LightLimits::MAX;
+        e.submerged = m_physics.submerged_fraction(*m_player, m_world);
+        touching_ground(e);
+        m_heat_reading = BodyHeat::read(e, m_gear, s);
+        m_body_heat.update(dt, s, m_heat_reading, m_gear);
+        const double speed = m_body_heat.speed_factor(s) * m_gear.speed;
+        if (speed == m_heat_speed) return;
+        m_heat_speed = speed;
+        AttributeInstance& a = m_player->attributes().get(Attributes::MovementSpeed);
+        if (speed >= 1.0) a.remove_modifier(HEAT_MODIFIER);
+        else a.add_modifier({ HEAT_MODIFIER, speed - 1.0, ModifierOp::MultiplyTotal });
     }
 
     int simulation_distance() const noexcept { return vmax(m_settings.streaming.simulation_distance, 1); }
@@ -761,11 +822,14 @@ private:
 
         if (m_climate_timer <= 0.0) {
             m_climate_timer = CLIMATE_REFRESH;
-            m_climate = climate_around(eye);
+            m_climate = m_climate_field.around(*m_generator, m_settings.terrain, m_settings.weather.temperature, eye);
         }
 
         const double game_days = static_cast<double>(m_clock.day()) + m_clock.time();
-        m_local_weather = m_weather.local(m_climate, eye.z, m_settings.terrain.sea_level, m_clock.time(), game_days, m_date, m_settings.weather, m_settings.seasons);
+        BiomeClimate here = m_climate;
+        here.temperature += m_climate_field.nearby_change(m_settings.weather.temperature, eye, game_days);
+        m_local_weather = m_weather.local(here, eye.z, m_settings.terrain.sea_level, m_clock.time(), game_days, m_date, m_settings.weather, m_settings.seasons, eye.x, eye.y);
+        m_rain_easing.apply(m_local_weather, frame_dt, m_weather, m_settings.weather);
         if (!running) return;
         m_wind_angle += frame_dt * WIND_TURN * (m_weather_rng.unit() - HALF);
         const double wind = m_settings.weather.wind * (WIND_CALM + WIND_GUST * m_local_weather.cloud);
@@ -832,19 +896,6 @@ private:
         m_terrain.set_water(m_water_look, m_waves_on);
     }
 
-    BiomeClimate climate_around(const vector3d& p) const {
-        std::array<BiomeClimate, CLIMATE_SAMPLES> found{};
-        std::size_t count = 0;
-
-        for (const auto& offset : CLIMATE_OFFSETS) {
-            const int x = static_cast<int>(std::floor(p.x + offset[0] * CLIMATE_REACH)), y = static_cast<int>(std::floor(p.y + offset[1] * CLIMATE_REACH));
-            const Biome* biome = m_generator->biome_at(x, y);
-            if (biome) found[count++] = BiomeWeather::effective(*biome, m_settings.terrain.biome(biome->id().str()));
-        }
-
-        return BiomeWeather::blend(found.data(), count);
-    }
-
     void restore_weather(const WorldState& s) {
         if (!s.has_weather) {
             m_weather.force(WeatherKind::Clear, m_settings.weather, m_weather_rng);
@@ -885,6 +936,7 @@ private:
         spawn_splashes();
         update_water_weather(dt);
         m_entities.tick(ctx);
+        update_body_heat(dt);
         m_clock.advance(dt, m_settings.day_cycle);
         const double day_seconds = m_settings.day_cycle.real_day_seconds();
         m_date = Calendar::at(m_clock.day(), m_clock.time(), m_settings.seasons);
@@ -900,12 +952,13 @@ private:
         return std::chrono::duration<double, std::milli>(b - a).count();
     }
 
-    inline static const vector3d LEGACY_SUN{ -0.35, 0.55, -1.0 };
+    inline static const vector3d   LEGACY_SUN{ -0.35, 0.55, -1.0 };
+    inline static const Identifier HEAT_MODIFIER{ core_id(Kind::Attribute, "body_heat") };
+
     static constexpr int         LOOK_SETTLE_FRAMES   = 2;
     static constexpr double      SECONDS_PER_MINUTE   = 60.0;
-    static constexpr std::size_t CLIMATE_SAMPLES      = 5;
-    static constexpr double      CLIMATE_REFRESH      = 0.5;
-    static constexpr double      CLIMATE_REACH        = 24.0;
+    static constexpr double      CLIMATE_REFRESH      = 0.1;
+    static constexpr double      GROUND_PROBE         = 0.05;
     static constexpr int         WATER_SAMPLES        = 3;
     static constexpr int         WATER_SPACING        = 8;
     static constexpr double      WIND_TURN            = 0.4;
@@ -923,7 +976,6 @@ private:
     static constexpr double      SPLASH_OUT_MAX       = 2.5;
     static constexpr double      SPLASH_UP_MIN        = 1.5;
     static constexpr double      SPLASH_UP_MAX        = 3.5;
-    static constexpr std::array<std::array<double, 2>, CLIMATE_SAMPLES> CLIMATE_OFFSETS{ { { 0.0, 0.0 }, { 1.0, 0.0 }, { -1.0, 0.0 }, { 0.0, 1.0 }, { 0.0, -1.0 } } };
 
     static Color opaque(const Color& c) noexcept { return Color(c.red(), c.green(), c.blue()); }
 
@@ -1034,8 +1086,17 @@ private:
     WeatherSystem                   m_weather;
     PrecipitationRenderer           m_precipitation;
     LocalWeather                    m_local_weather;
+    PrecipitationEasing             m_rain_easing;
+    HeatSensor                      m_heat_sensor;
+    BodyHeat                        m_body_heat;
+    HeatReading                     m_heat_reading;
+    double                          m_heat_scan  = 0.0;
+    double                          m_heat_speed = 1.0;
+    HeatGearRegistry                m_heat_gear;
+    HeatGear                        m_gear;
     CalendarDate                    m_date;
     BiomeClimate                    m_climate;
+    ClimateField                    m_climate_field;
     SeededRandom                    m_weather_rng;
     double                          m_climate_timer = 0.0;
     double                          m_wind_angle = 0.0;
@@ -1044,6 +1105,7 @@ private:
     WaterWeather                    m_water_weather;
     WaterLookPtr                    m_water_look;
     CpuTimings                      m_cpu;
+    fizmo::windows::GpuMemory       m_gpu_memory;
     CpuTimings                      m_cpu_frame;
     bool                            m_waves_on = false;
     bool                            m_key_consumed = false;

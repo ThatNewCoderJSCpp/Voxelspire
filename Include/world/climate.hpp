@@ -109,6 +109,8 @@ public:
 
     void finish(TerrainPoint& p, double x, double y) const noexcept { rescale(p.climate, x, y, 1.0); }
 
+    double sea_level_temperature(double x, double y) const noexcept { return clamp_unit(spread(m_temperature.at(x, y)) + m_temperature_bias); }
+
     void rescale(Climate& c, double x, double y, double scale) const noexcept {
         const double sx = x / vmax(scale, MIN_SIZE), sy = y / vmax(scale, MIN_SIZE);
         c.temperature = clamp_unit(spread(m_temperature.at(sx, sy)) + m_temperature_bias) - vmax(c.elevation, 0.0) * LAPSE / vmax(m_settings.snow_line, MIN_SIZE);

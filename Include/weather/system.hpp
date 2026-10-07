@@ -5,8 +5,8 @@
 #include <cstdint>
 #include "../core/random.hpp"
 #include "../world/biome.hpp"
-#include "../core/settings.hpp"
 #include "calendar.hpp"
+#include "../core/settings.hpp"
 
 namespace voxelspire {
 
@@ -65,25 +65,29 @@ struct BiomeWeather {
         return c;
     }
 
-    static BiomeClimate blend(const BiomeClimate* climates, std::size_t count) noexcept {
+    static BiomeClimate blend(const BiomeClimate* climates, std::size_t count) noexcept { return blend(climates, nullptr, count); }
+
+    static BiomeClimate blend(const BiomeClimate* climates, const double* weights, std::size_t count) noexcept {
         BiomeClimate out{ 0.0, 0.0, 0.0, 0.0, 0.0, Color(0, 0, 0) };
-        if (count == 0) return BiomeClimate{};
-        double red = 0.0, green = 0.0, blue = 0.0;
+        double red = 0.0, green = 0.0, blue = 0.0, total = 0.0;
 
         for (std::size_t i = 0; i < count; ++i) {
-            out.temperature  += climates[i].temperature;
-            out.daily_swing  += climates[i].daily_swing;
-            out.season_swing += climates[i].season_swing;
-            out.rainfall     += climates[i].rainfall;
-            out.waves        += climates[i].waves;
-            red   += climates[i].water.red();
-            green += climates[i].water.green();
-            blue  += climates[i].water.blue();
+            const double w = weights ? weights[i] : 1.0;
+            const BiomeClimate& c = climates[i];
+            out.temperature  += c.temperature * w;
+            out.daily_swing  += c.daily_swing * w;
+            out.season_swing += c.season_swing * w;
+            out.rainfall     += c.rainfall * w;
+            out.waves        += c.waves * w;
+            red   += c.water.red() * w;
+            green += c.water.green() * w;
+            blue  += c.water.blue() * w;
+            total += w;
         }
 
-        const double n = static_cast<double>(count);
-        auto channel = [n](double v) { return static_cast<std::uint8_t>(std::lround(v / n)); };
-        return { out.temperature / n, out.daily_swing / n, out.season_swing / n, out.rainfall / n, out.waves / n, Color(channel(red), channel(green), channel(blue)) };
+        if (total <= 0.0) return BiomeClimate{};
+        auto channel = [total](double v) { return static_cast<std::uint8_t>(std::lround(v / total)); };
+        return { out.temperature / total, out.daily_swing / total, out.season_swing / total, out.rainfall / total, out.waves / total, Color(channel(red), channel(green), channel(blue)) };
     }
 };
 
@@ -135,25 +139,22 @@ public:
             if (rng.unit() < 1.0 - std::exp(-s.lightning_rate * hours * m_state.intensity)) m_flash = 1.0;
     }
 
-    static double shower(double game_days, double rainfall, const WeatherSettings& s) noexcept {
+    static double shower(double game_days, double rainfall, const WeatherSettings& s, double x = 0.0, double y = 0.0) noexcept {
         const double chance = vclamp((rainfall - 1.0) * s.showers, 0.0, MAX_SHOWER_CHANCE);
         if (chance <= 0.0 || s.shower_hours <= 0.0) return 0.0;
-        const double t = game_days * HOURS_PER_DAY / s.shower_hours;
-        const double cell = std::floor(t), f = t - cell;
-        const double a = hash01(static_cast<std::int64_t>(cell)), b = hash01(static_cast<std::int64_t>(cell) + 1);
-        const double k = f * f * (3.0 - 2.0 * f);
-        const double v = a + (b - a) * k;
+        const double size = vmax(s.shower_size, 1.0);
+        const double v = value_noise(x / size, y / size, game_days * HOURS_PER_DAY / s.shower_hours);
         if (v >= chance) return 0.0;
-        return vclamp((chance - v) / chance * SHOWER_RAMP, 0.0, 1.0);
+        return vclamp((chance - v) * SHOWER_SHARPNESS, 0.0, 1.0);
     }
 
     LocalWeather local(const BiomeClimate& c, double altitude, int sea_level, double time_of_day, double game_days, const CalendarDate& date,
-                       const WeatherSettings& s, const SeasonSettings& seasons) const noexcept {
+                       const WeatherSettings& s, const SeasonSettings& seasons, double x = 0.0, double y = 0.0) const noexcept {
         LocalWeather out;
         const TemperatureSettings& t = s.temperature;
         double intensity = m_state.intensity;
         out.kind = m_state.kind;
-        const double rain_shower = s.mode == WeatherMode::AlwaysClear ? 0.0 : shower(game_days, c.rainfall, s);
+        const double rain_shower = s.mode == WeatherMode::AlwaysClear ? 0.0 : shower(game_days, c.rainfall, s, x, y);
 
         if (rain_shower > intensity) {
             intensity = rain_shower;
@@ -161,9 +162,11 @@ public:
         }
 
         out.cloud = vclamp(intensity * CLOUD_LEAD, 0.0, 1.0);
-        const bool wet = out.kind != WeatherKind::Clear && c.rainfall >= s.dry_below;
-        out.amount = wet ? intensity * vmin(c.rainfall, RAIN_CAP) : 0.0;
-        if (!wet) out.cloud *= vclamp(c.rainfall / vmax(s.dry_below, MIN_DIVISOR), 0.0, 1.0);
+        const double dry_start = s.dry_below * DRY_FADE;
+        const double wetness = vclamp((c.rainfall - dry_start) / vmax(s.dry_below - dry_start, MIN_DIVISOR), 0.0, 1.0);
+        const bool wet = out.kind != WeatherKind::Clear && wetness > 0.0;
+        out.amount = wet ? intensity * vmin(c.rainfall, RAIN_CAP) * wetness : 0.0;
+        if (wetness < 1.0) out.cloud *= vclamp(c.rainfall / vmax(s.dry_below, MIN_DIVISOR), 0.0, 1.0);
         const double storm = m_state.kind == WeatherKind::Storm ? s.storm_darkening : s.darkening;
         out.darkness = out.cloud * storm;
 
@@ -191,10 +194,31 @@ private:
     static constexpr double        MIN_DIVISOR       = 1e-6;
     static constexpr double        RAIN_CAP          = 1.6;
     static constexpr double        MAX_SHOWER_CHANCE = 0.8;
-    static constexpr double        SHOWER_RAMP       = 3.0;
+    static constexpr double        SHOWER_SHARPNESS  = 5.0;
+    static constexpr double        DRY_FADE          = 0.6;
+    static constexpr std::uint64_t LATTICE_X         = 73856093ull;
+    static constexpr std::uint64_t LATTICE_Y         = 19349663ull;
+    static constexpr std::uint64_t LATTICE_T         = 83492791ull;
     static constexpr std::uint64_t SHOWER_SALT       = 0x5A0E7B11ull;
     static constexpr double        UNIT_SCALE        = 1.0 / 9007199254740992.0;
     static constexpr int           UNIT_SHIFT        = 11;
+
+    static double lattice(std::int64_t x, std::int64_t y, std::int64_t t) noexcept {
+        const std::uint64_t h = static_cast<std::uint64_t>(x) * LATTICE_X ^ static_cast<std::uint64_t>(y) * LATTICE_Y ^ static_cast<std::uint64_t>(t) * LATTICE_T;
+        return hash01(static_cast<std::int64_t>(h));
+    }
+
+    static double value_noise(double x, double y, double t) noexcept {
+        const double fx = std::floor(x), fy = std::floor(y), ft = std::floor(t);
+        const auto ix = static_cast<std::int64_t>(fx), iy = static_cast<std::int64_t>(fy), it = static_cast<std::int64_t>(ft);
+        auto smooth = [](double v) { return v * v * (3.0 - 2.0 * v); };
+        const double kx = smooth(x - fx), ky = smooth(y - fy), kt = smooth(t - ft);
+        auto lerp = [](double a, double b, double k) { return a + (b - a) * k; };
+        auto plane = [&](std::int64_t c) {
+            return lerp(lerp(lattice(ix, iy, c), lattice(ix + 1, iy, c), kx), lerp(lattice(ix, iy + 1, c), lattice(ix + 1, iy + 1, c), kx), ky);
+        };
+        return lerp(plane(it), plane(it + 1), kt);
+    }
 
     static double hash01(std::int64_t n) noexcept {
         std::uint64_t h = static_cast<std::uint64_t>(n) ^ SHOWER_SALT;
@@ -236,6 +260,34 @@ private:
 
     WeatherState m_state;
     double       m_flash = 0.0;
+};
+
+class PrecipitationEasing {
+public:
+    void apply(LocalWeather& w, double real_seconds, const WeatherSystem& system, const WeatherSettings& s) noexcept {
+        const double step = s.rain_fade > 0.0 ? vmax(real_seconds, 0.0) / s.rain_fade : 1.0;
+        m_amount   = approach(m_amount, w.amount, step);
+        m_cloud    = approach(m_cloud, w.cloud, step);
+        m_darkness = approach(m_darkness, w.darkness, step);
+        w.amount   = m_amount;
+        w.cloud    = m_cloud;
+        w.darkness = m_darkness;
+
+        if (m_amount <= 0.0) {
+            w.precipitation = Precipitation::None;
+            return;
+        }
+
+        if (w.precipitation == Precipitation::None) w.precipitation = system.kind_of(w.temperature, s);
+        if (w.kind == WeatherKind::Clear) w.kind = WeatherKind::Rain;
+    }
+
+private:
+    static double approach(double from, double to, double step) noexcept { return from + vclamp(to - from, -step, step); }
+
+    double m_amount   = 0.0;
+    double m_cloud    = 0.0;
+    double m_darkness = 0.0;
 };
 
 } // namespace voxelspire

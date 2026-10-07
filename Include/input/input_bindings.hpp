@@ -13,10 +13,9 @@ namespace voxelspire {
 enum class Action {
     MoveForward = 0, MoveBack, MoveLeft, MoveRight,
     Jump, Sprint, Crawl, Crouch,
-    CycleCamera, OpenMenu, Respawn, ToggleHud,
+    CycleCamera, OpenMenu, ToggleHud,
     RenderDistanceUp, RenderDistanceDown,
-    CycleLighting, ToggleHandLight, TimeForward, TimeBackward, ToggleDayCycle,
-    Swim, CycleHudCorner, HudLarger, HudSmaller, Alt, CycleWeather
+    CycleLighting, Swim, Alt
 };
 
 struct ActionInfo {
@@ -40,19 +39,10 @@ inline const std::vector<ActionInfo>& all_actions() {
         { Action::Alt,                "alt",                  "Alternate speed",       "Hold to switch the current movement to its alternate speed." },
         { Action::OpenMenu,           "open_menu",            "Settings menu",         "Open or close this menu. Also releases the mouse." },
         { Action::CycleCamera,        "cycle_camera",         "Cycle camera",          "Switch between first person and the third person views." },
-        { Action::Respawn,            "respawn",              "Respawn",               "Return to the spawn point." },
         { Action::ToggleHud,          "toggle_hud",           "Toggle HUD",            "Show or hide the debug panel." },
-        { Action::CycleHudCorner,     "cycle_hud_corner",     "Move HUD",              "Move the debug panel to the next corner." },
-        { Action::HudLarger,          "hud_larger",           "HUD larger",            "Make the HUD bigger." },
-        { Action::HudSmaller,         "hud_smaller",          "HUD smaller",           "Make the HUD smaller." },
         { Action::RenderDistanceUp,   "render_distance_up",   "Render distance +",     "Increase the render distance by one step." },
         { Action::RenderDistanceDown, "render_distance_down", "Render distance -",     "Decrease the render distance by one step." },
         { Action::CycleLighting,      "cycle_lighting",       "Next lighting preset",  "Cycle through the lighting presets." },
-        { Action::ToggleHandLight,    "toggle_hand_light",    "Hand light",            "Turn the light you carry on or off." },
-        { Action::TimeForward,        "time_forward",         "Time forward",          "Skip ahead one hour." },
-        { Action::TimeBackward,       "time_backward",        "Time backward",         "Go back one hour." },
-        { Action::ToggleDayCycle,     "toggle_day_cycle",     "Pause time",            "Stop or resume the day and night cycle." },
-        { Action::CycleWeather,       "cycle_weather",        "Next weather",          "Switch to clear, rain or a storm right away." },
     };
     return actions;
 }
@@ -75,21 +65,10 @@ public:
         b.bind(Action::Crawl,              { "z", "Z" });
         b.bind(Action::CycleCamera,        { "F5" });
         b.bind(Action::OpenMenu,           { "Escape" });
-        b.bind(Action::Respawn,            { "r", "R" });
         b.bind(Action::ToggleHud,          { "F3" });
-        b.bind(Action::RenderDistanceUp,   { "=", "+" });
-        b.bind(Action::RenderDistanceDown, { "-", "_" });
         b.bind(Action::CycleLighting,      { "F7" });
-        b.bind(Action::ToggleHandLight,    { "l", "L" });
-        b.bind(Action::TimeForward,        { "]", "}" });
-        b.bind(Action::TimeBackward,       { "[", "{" });
-        b.bind(Action::ToggleDayCycle,     { "F8" });
-        b.bind(Action::CycleWeather,       { "F6" });
         b.bind(Action::Swim,               { "LeftShift" });
-        b.bind(Action::CycleHudCorner,     { "F4" });
         b.bind(Action::Alt,                { "LeftAlt" });
-        b.bind(Action::HudLarger,          { "F10" });
-        b.bind(Action::HudSmaller,         { "F9" });
         return b;
     }
 

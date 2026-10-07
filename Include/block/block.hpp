@@ -90,6 +90,19 @@ private:
     static constexpr std::uint8_t clamp_level(int v) noexcept { return static_cast<std::uint8_t>(vclamp(v, 0, LightLimits::MAX)); }
 };
 
+struct BlockThermal {
+    static constexpr double AUTO     = -1.0;
+    static constexpr double NO_LIMIT = 1e9;
+
+    double heat            = 0.0;
+    double insulation      = AUTO;
+    double conductivity    = 1.0;
+    double min_temperature = -NO_LIMIT;
+    double max_temperature = NO_LIMIT;
+
+    double surface(double air) const noexcept { return vclamp(air, min_temperature, max_temperature); }
+};
+
 struct BlockProperties {
     bool          solid           = true;
     bool          opaque          = true;
@@ -103,6 +116,7 @@ struct BlockProperties {
     SurfaceFinish finish          = SurfaceFinish::Matte;
     BlockShape    shape;
     bool          blends          = true;
+    BlockThermal  thermal;
 
     static BlockProperties see_through(bool solid, bool fluid = false, int light_opacity = LightLimits::CLEAR) noexcept {
         BlockProperties p;
@@ -115,6 +129,11 @@ struct BlockProperties {
 
     BlockProperties& glowing(LightEmission light) noexcept { emission = light; return *this; }
     BlockProperties& finished(SurfaceFinish surface) noexcept { finish = surface; return *this; }
+    BlockProperties& heating(double celsius) noexcept { thermal.heat = celsius; return *this; }
+    BlockProperties& insulating(double share) noexcept { thermal.insulation = share; return *this; }
+    BlockProperties& conducting(double speed) noexcept { thermal.conductivity = speed; return *this; }
+    BlockProperties& no_warmer_than(double celsius) noexcept { thermal.max_temperature = celsius; return *this; }
+    BlockProperties& no_colder_than(double celsius) noexcept { thermal.min_temperature = celsius; return *this; }
 
     BlockProperties& shaped(const BlockShape& s) noexcept {
         shape     = s;
@@ -141,6 +160,7 @@ struct BlockTraits {
     SurfaceFinish finish    = SurfaceFinish::Matte;
     RenderLayer   layer     = RenderLayer::None;
     BlockShape    shape;
+    BlockThermal  thermal;
     std::array<FaceAppearance, FACE_COUNT> faces{};
 
     const FaceAppearance& face(Face f) const noexcept { return faces[static_cast<std::size_t>(f)]; }
@@ -198,11 +218,23 @@ public:
         t.finish    = m_props.finish;
         t.layer     = m_props.layer();
         t.shape     = m_props.shape;
+        t.thermal   = m_props.thermal;
+        if (t.thermal.insulation < 0.0) t.thermal.insulation = default_insulation(t);
         for (Face f : ALL_FACES) t.faces[static_cast<std::size_t>(f)] = face_appearance(f);
         return t;
     }
 
 protected:
+    static constexpr double SOLID_INSULATION       = 0.7;
+    static constexpr double SEE_THROUGH_INSULATION = 0.35;
+    static constexpr double FLUID_INSULATION       = 0.5;
+
+    static double default_insulation(const BlockTraits& t) noexcept {
+        if (t.fluid) return FLUID_INSULATION;
+        if (!t.solid) return 0.0;
+        return t.opaque && t.full_cube ? SOLID_INSULATION : SEE_THROUGH_INSULATION;
+    }
+
     FaceAppearance appearance(const Color& base, int max_variation, bool plain = false) const noexcept {
         return { base, static_cast<int>(std::lround(max_variation * vmax(m_props.color_variation, 0.0))), plain };
     }

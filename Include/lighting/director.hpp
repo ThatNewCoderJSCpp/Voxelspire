@@ -6,6 +6,7 @@
 #include <vector>
 #include "../world/world.hpp"
 #include "dynamic_light.hpp"
+#include "../core/settings.hpp"
 #include "sun_path.hpp"
 
 namespace voxelspire {
@@ -73,6 +74,7 @@ public:
 
         out.point_shadows.enabled         = s.point_shadows;
         out.point_shadows.max_lights      = s.max_point_shadows;
+        out.point_shadows.moving_faces    = s.moving_shadow_faces;
         out.point_shadows.resolution      = s.point_shadow_resolution;
         out.point_shadows.strength        = static_cast<float>(s.shadow_strength);
         out.point_shadows.softness        = static_cast<float>(s.shadow_softness);
@@ -199,6 +201,16 @@ private:
     static constexpr double TIME_WRAP = 3600.0;
     static constexpr double CHANNEL_MAX = 255.0;
 
+    fizmo::graphics::PointLight3D scene_light(const DynamicLight& l, double fade) const {
+        fizmo::graphics::PointLight3D p(l.position, l.color, static_cast<float>(l.intensity * fade), static_cast<float>(l.radius), l.casts_shadows || m_settings.point_shadows);
+        p.direction     = l.direction;
+        p.cone          = static_cast<float>(vclamp(l.cone, DynamicLightLimits::cone.min, DynamicLightLimits::cone.max));
+        p.cone_softness = static_cast<float>(vclamp(l.cone_softness, DynamicLightLimits::softness.min, DynamicLightLimits::softness.max));
+        p.moving        = l.moving;
+        p.id            = l.id;
+        return p;
+    }
+
     void add_dynamic(const vector3d& camera, const std::vector<DynamicLight>& lights) {
         m_order.clear();
         const double reach = m_settings.dynamic_light_distance;
@@ -216,7 +228,7 @@ private:
         for (std::size_t k = 0; k < n; ++k) {
             const DynamicLight& l = lights[m_order[k].second];
             const double fade = rank_fade(cut, m_order[k].first);
-            m_scene.point_lights.emplace_back(l.position, l.color, static_cast<float>(l.intensity * fade), static_cast<float>(l.radius), l.casts_shadows || m_settings.point_shadows);
+            m_scene.point_lights.push_back(scene_light(l, fade));
         }
     }
 

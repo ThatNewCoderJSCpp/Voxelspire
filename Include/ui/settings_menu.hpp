@@ -259,6 +259,7 @@ private:
     static constexpr double      BOX            = 22.0;
     static constexpr double      SMALL_BUTTON   = 26.0;
     static constexpr double      VALUE_W        = 116.0;
+    static constexpr int         ALT_PART       = 1;
     static constexpr double      HEX_W          = 96.0;
     static constexpr double      TRACK_H        = 6.0;
     static constexpr double      KNOB           = 14.0;
@@ -327,7 +328,8 @@ private:
     void changed(const SettingControl& c) { m_changes |= c.apply; }
 
     bool error_on(int index, Target target, int part = 0) const noexcept {
-        return m_error.seconds > 0.0 && m_error.control == index && m_error.target == target && (target != Target::Channel || m_error.part == part);
+        const bool by_part = target == Target::Channel || target == Target::Number;
+        return m_error.seconds > 0.0 && m_error.control == index && m_error.target == target && (!by_part || m_error.part == part);
     }
 
     bool editing(int index, Target target, int part = 0) const noexcept {
@@ -502,7 +504,8 @@ private:
             case ControlKind::Integer:
             case ControlKind::Decimal: {
                 const int sb = p.px(SMALL_BUTTON), vw = p.px(VALUE_W);
-                const int track_x = x + sb + gap, track_w = w - sb * 2 - gap * 3 - vw;
+                const bool alt = c.number.alt.active();
+                const int track_x = x + sb + gap, track_w = w - sb * 2 - gap * 3 - vw - (alt ? vw + gap : 0);
                 const int th = vmax(1, p.px(TRACK_H)), knob = p.px(KNOB);
                 const int filled = static_cast<int>(std::lround(track_w * fraction(c, c.get_number())));
                 p.button(x, mid - sb / 2, sb, sb, "-", style.control, fg, on && hot(x, mid - sb / 2, sb, sb), small);
@@ -522,6 +525,18 @@ private:
                 hit(track_x - knob / 2, y, track_w + knob, h, HitKind::Slider);
                 hit(plus_x, mid - sb / 2, sb, sb, HitKind::Plus);
                 hit(value_x, mid - sb / 2, vw, sb, HitKind::Value);
+
+                if (alt) {
+                    const int alt_x = value_x + vw + gap;
+                    FieldLook al = look(style, on);
+                    al.editing = editing(index, Target::Number, ALT_PART);
+                    al.failed = error_on(index, Target::Number, ALT_PART);
+                    al.hot = on && hot(alt_x, mid - sb / 2, vw, sb);
+                    if (al.editing) { al.all_selected = m_field.all_selected(); al.caret = m_field.caret(); al.caret_on = caret_on(); }
+                    p.field(alt_x, mid - sb / 2, vw, sb, al.editing ? m_field.text() : format_number(c.number.alt.to(c.get_number()), c.decimals()), c.number.alt.unit, al);
+                    if (al.failed) m_boxes[index] = { alt_x, mid - sb / 2, vw, sb };
+                    hit(alt_x, mid - sb / 2, vw, sb, HitKind::Value, ALT_PART);
+                }
                 m_track[index] = { track_x, track_w };
                 break;
             }
@@ -725,8 +740,10 @@ private:
         if (hex) return std::string("Type a hex color like #FFA040") + (c && c->with_alpha ? " or #FFA040C0." : ".") + keys;
         if (channel) return "Type a whole number from 0 to 255." + keys;
         if (!c) return keys;
-        const Bounds b = c->limits();
-        return std::string(c->integer() ? "Type a whole number" : "Type a number") + " from " + format_limit(b.min) + " to " + format_limit(b.max) + "." + keys;
+        const bool alt = m_edit.target == Target::Number && m_edit.part == ALT_PART && c->number.alt.active();
+        const Bounds b = alt ? c->number.alt.bounds(c->limits()) : c->limits();
+        const std::string unit = alt ? " " + c->number.alt.unit : std::string();
+        return std::string(c->integer() && !alt ? "Type a whole number" : "Type a number") + " from " + format_limit(b.min) + unit + " to " + format_limit(b.max) + unit + "." + keys;
     }
 
     static double fraction(const SettingControl& c, double v) {
@@ -824,9 +841,13 @@ private:
         m_edit = { target, index, part };
 
         switch (target) {
-            case Target::Number:
-                m_field.begin(format_number(c->get_number(), c->decimals()), c->integer() ? TextFilter::Integer : TextFilter::Decimal, c->limits().min < 0.0, NUMBER_LENGTH);
+            case Target::Number: {
+                const bool alt = part == ALT_PART && c->number.alt.active();
+                const double shown = alt ? c->number.alt.to(c->get_number()) : c->get_number();
+                const Bounds b = alt ? c->number.alt.bounds(c->limits()) : c->limits();
+                m_field.begin(format_number(shown, c->decimals()), c->integer() && !alt ? TextFilter::Integer : TextFilter::Decimal, b.min < 0.0, NUMBER_LENGTH);
                 break;
+            }
             case Target::Channel:
             case Target::PickerChannel:
                 m_field.begin(std::to_string(ColorMath::channel(c->get_color(), part)), TextFilter::Integer, false, CHANNEL_LENGTH);
@@ -845,7 +866,7 @@ private:
     bool same_target(const Hit& h) const noexcept {
         if (h.control != m_edit.control) return false;
         switch (h.kind) {
-            case HitKind::Value:         return m_edit.target == Target::Number;
+            case HitKind::Value:         return m_edit.target == Target::Number && m_edit.part == h.part;
             case HitKind::Hex:           return m_edit.target == Target::Hex;
             case HitKind::Channel:       return m_edit.target == Target::Channel && m_edit.part == h.part;
             case HitKind::PickerHex:     return m_edit.target == Target::PickerHex;
@@ -871,6 +892,15 @@ private:
 
         switch (edit.target) {
             case Target::Number: {
+                if (edit.part == ALT_PART && c->number.alt.active()) {
+                    const AltUnit& alt = c->number.alt;
+                    const NumberCheck check = check_value(text, alt.bounds(c->limits()), false);
+                    if (!check.ok) { fail(*c, edit, check.error); break; }
+                    const double value = c->limits().clamp(alt.from(check.value));
+                    set_number(*c, c->integer() ? std::round(value) : value);
+                    break;
+                }
+
                 const NumberCheck check = check_number(*c, text);
                 if (check.ok) set_number(*c, check.value);
                 else fail(*c, edit, check.error);
@@ -935,6 +965,14 @@ private:
     }
 
     void move_edit(const Edit& from, int direction) {
+        if (from.target == Target::Number) {
+            const SettingControl* c = control(from.control);
+            const bool alt = c && c->number.alt.active();
+
+            if (alt && from.part == 0 && direction > 0) { begin_edit(Target::Number, from.control, ALT_PART); return; }
+            if (alt && from.part == ALT_PART && direction < 0) { begin_edit(Target::Number, from.control, 0); return; }
+        }
+
         if (from.target == Target::PickerHex || from.target == Target::PickerChannel) {
             const SettingControl* c = control(from.control);
             const int last = c && c->with_alpha ? ColorPicker::CHANNELS - 1 : ColorPicker::CHANNELS - 2;
@@ -949,7 +987,7 @@ private:
         for (int i = from.control + direction; i >= 0 && i < static_cast<int>(list.size()); i += direction) {
             const SettingControl& c = list[static_cast<std::size_t>(i)];
             if (!c.is_number() || !c.enabled()) continue;
-            begin_edit(Target::Number, i, 0);
+            begin_edit(Target::Number, i, direction < 0 && c.number.alt.active() ? ALT_PART : 0);
             reveal(i);
             return;
         }
@@ -1009,7 +1047,7 @@ private:
                 break;
             case HitKind::Minus: nudge(h.control, -1.0, m_shift); break;
             case HitKind::Plus:  nudge(h.control, 1.0, m_shift); break;
-            case HitKind::Value: begin_edit(Target::Number, h.control, 0); break;
+            case HitKind::Value: begin_edit(Target::Number, h.control, h.part); break;
             case HitKind::Slider: {
                 auto it = m_track.find(h.control);
                 if (it == m_track.end()) break;

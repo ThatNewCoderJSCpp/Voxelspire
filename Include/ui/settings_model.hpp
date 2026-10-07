@@ -30,13 +30,26 @@ struct Apply {
     static constexpr std::uint32_t Streaming   = 1u << 8;
     static constexpr std::uint32_t Particles   = 1u << 9;
     static constexpr std::uint32_t Entities    = 1u << 10;
-    static constexpr std::uint32_t HandLight   = 1u << 11;
     static constexpr std::uint32_t Player      = 1u << 12;
     static constexpr std::uint32_t Celestial   = 1u << 13;
     static constexpr std::uint32_t Everything  = ~0u;
 };
 
 enum class ControlKind : std::uint8_t { Header = 0, Toggle, Integer, Decimal, Choice, Color, Binding, Button, Text };
+
+struct AltUnit {
+    static constexpr double FAHRENHEIT_SCALE  = 1.8;
+    static constexpr double FAHRENHEIT_OFFSET = 32.0;
+
+    std::string unit;
+    double      scale  = 0.0;
+    double      offset = 0.0;
+
+    bool   active()        const noexcept { return scale != 0.0; }
+    double to(double v)    const noexcept { return v * scale + offset; }
+    double from(double v)  const noexcept { return (v - offset) / scale; }
+    Bounds bounds(Bounds b) const noexcept { const double a = to(b.min), c = to(b.max); return { vmin(a, c), vmax(a, c) }; }
+};
 
 struct NumberFormat {
     static constexpr int DEFAULT_DECIMALS = 2;
@@ -46,6 +59,7 @@ struct NumberFormat {
     int         decimals = DEFAULT_DECIMALS;
     std::string unit;
     bool        log      = false;
+    AltUnit     alt;
 };
 
 struct SettingControl {
@@ -391,6 +405,9 @@ public:
     SettingsPage& decimals(int count) { last().number.decimals = vmax(count, 0); return *this; }
     SettingsPage& step(double size) { last().number.step = vmax(size, 0.0); return *this; }
     SettingsPage& logarithmic() { last().number.log = true; return *this; }
+    SettingsPage& also_in(const std::string& text, double scale, double offset = 0.0) { last().number.alt = { text, scale, offset }; return *this; }
+    SettingsPage& celsius() { unit("C"); return also_in("F", AltUnit::FAHRENHEIT_SCALE, AltUnit::FAHRENHEIT_OFFSET); }
+    SettingsPage& celsius_change() { unit("C"); return also_in("F", AltUnit::FAHRENHEIT_SCALE); }
     SettingsPage& live_limits(std::function<Bounds()> limits) { last().live_limits = std::move(limits); return *this; }
     SettingsPage& transient() { last().persist = false; return *this; }
 
