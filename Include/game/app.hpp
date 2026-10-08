@@ -119,7 +119,8 @@ public:
         m_store.touch(folder);
         slot.folder      = m_store.folder_path(folder);
         slot.name        = record.name;
-        slot.write_state = [this, folder](const WorldState& state) { return m_store.save_state(folder, state); };
+        slot.write_state   = [this, folder](const WorldState& state) { return m_store.save_state(folder, state); };
+        slot.write_options = [this, folder](const GameSettings& options, const WorldState& state) { return m_store.save_options(folder, options, state); };
         m_game = std::make_unique<Game>(world, WorldGeneratorFactory{}, std::move(slot));
         m_game->start(*m_window, m_width, m_height);
         m_last_world = folder;

@@ -29,6 +29,8 @@ enum class Kind : std::uint8_t {
     Feature,
     Physics,
     Preset,
+    Damage,
+    Survival,
     Other
 };
 
@@ -46,6 +48,8 @@ inline const char* kind_name(Kind k) noexcept {
         case Kind::Feature:   return "feature";
         case Kind::Physics:   return "physics";
         case Kind::Preset:    return "preset";
+        case Kind::Damage:    return "damage";
+        case Kind::Survival:  return "survival";
         case Kind::Other:     return "other";
     }
 

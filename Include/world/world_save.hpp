@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <ostream>
@@ -17,6 +18,12 @@
 #include "chunk.hpp"
 
 namespace voxelspire {
+
+struct SavedStack {
+    int         slot  = 0;
+    std::string item;
+    int         count = 0;
+};
 
 struct WorldState {
     bool         has_player        = false;
@@ -32,6 +39,21 @@ struct WorldState {
     double       weather_target    = 0.0;
     double       weather_remaining = 0.0;
     bool         weather_hail      = false;
+    bool         has_vitals        = false;
+    bool         dead              = false;
+    double       health            = 0.0;
+    double       hunger            = 0.0;
+    double       thirst            = 0.0;
+    double       stamina           = 0.0;
+    double       breath            = 0.0;
+    double       stomach_bulk      = 0.0;
+    double       stomach_energy    = 0.0;
+    double       stomach_water     = 0.0;
+    bool         has_inventory     = false;
+    int          selected_slot     = 0;
+
+    std::vector<SavedStack> inventory;
+    std::vector<SavedStack> stack_sizes;
 };
 
 struct WorldStateFormat {
@@ -50,9 +72,21 @@ struct WorldStateFormat {
     static constexpr const char* WEATHER_GOAL = "state.weather.target";
     static constexpr const char* WEATHER_LEFT = "state.weather.remaining";
     static constexpr const char* WEATHER_HAIL = "state.weather.hail";
+    static constexpr const char* HEALTH       = "state.vitals.health";
+    static constexpr const char* HUNGER       = "state.vitals.hunger";
+    static constexpr const char* THIRST       = "state.vitals.thirst";
+    static constexpr const char* STAMINA      = "state.vitals.stamina";
+    static constexpr const char* BREATH       = "state.vitals.breath";
+    static constexpr const char* DEAD         = "state.vitals.dead";
+    static constexpr const char* STOMACH_BULK = "state.vitals.stomach.bulk";
+    static constexpr const char* STOMACH_FOOD = "state.vitals.stomach.energy";
+    static constexpr const char* STOMACH_WET  = "state.vitals.stomach.water";
+    static constexpr const char* SELECTED     = "state.inventory.selected";
+    static constexpr const char* SLOT_PREFIX  = "state.inventory.slot.";
+    static constexpr const char* STACK_PREFIX = "state.items.stack.";
 
     static void write(std::ostream& out, const WorldState& s) {
-        if (!s.has_player && !s.has_time && !s.has_weather) return;
+        if (!s.has_player && !s.has_time && !s.has_weather && !s.has_vitals && !s.has_inventory) return;
         char buf[BUFFER];
 
         auto line = [&](const char* key, double v) {
@@ -83,6 +117,24 @@ struct WorldStateFormat {
             line(WEATHER_HAIL, s.weather_hail ? 1.0 : 0.0);
         }
 
+        if (s.has_vitals) {
+            line(HEALTH, s.health);
+            line(HUNGER, s.hunger);
+            line(THIRST, s.thirst);
+            line(STAMINA, s.stamina);
+            line(BREATH, s.breath);
+            line(DEAD, s.dead ? 1.0 : 0.0);
+            line(STOMACH_BULK, s.stomach_bulk);
+            line(STOMACH_FOOD, s.stomach_energy);
+            line(STOMACH_WET, s.stomach_water);
+        }
+
+        if (s.has_inventory) {
+            out << SELECTED << " = " << s.selected_slot << "\n";
+            for (const SavedStack& st : s.inventory) out << SLOT_PREFIX << st.slot << " = " << st.item << " " << st.count << "\n";
+            for (std::size_t i = 0; i < s.stack_sizes.size(); ++i) out << STACK_PREFIX << i << " = " << s.stack_sizes[i].item << " " << s.stack_sizes[i].count << "\n";
+        }
+
         out << "\n";
     }
 
@@ -110,11 +162,49 @@ struct WorldStateFormat {
         number(WEATHER_HAIL, hail);
         s.weather_kind = static_cast<int>(kind);
         s.weather_hail = hail != 0.0;
+        double dead = 0.0;
+        s.has_vitals = number(HEALTH, s.health) && number(HUNGER, s.hunger) && number(THIRST, s.thirst) && number(STAMINA, s.stamina) && number(BREATH, s.breath);
+        number(DEAD, dead);
+        number(STOMACH_BULK, s.stomach_bulk);
+        number(STOMACH_FOOD, s.stomach_energy);
+        number(STOMACH_WET, s.stomach_water);
+        s.dead = dead != 0.0;
+        read_inventory(values, s);
         return s;
     }
 
 private:
     static constexpr std::size_t BUFFER = 96;
+    static constexpr int         DECIMAL = 10;
+
+    static bool stack_value(const std::string& text, SavedStack& out) {
+        const std::size_t space = text.rfind(' ');
+        if (space == std::string::npos || space == 0) return false;
+        char* end = nullptr;
+        const long n = std::strtol(text.c_str() + space + 1, &end, DECIMAL);
+        if (end == text.c_str() + space + 1) return false;
+        out.item  = text.substr(0, space);
+        out.count = static_cast<int>(n);
+        return true;
+    }
+
+    static void read_inventory(const Values& values, WorldState& s) {
+        const std::string slots = SLOT_PREFIX, stacks = STACK_PREFIX;
+
+        for (const auto& kv : values) {
+            const bool slot = kv.first.compare(0, slots.size(), slots) == 0;
+            const bool stack = kv.first.compare(0, stacks.size(), stacks) == 0;
+            if (!slot && !stack) continue;
+            SavedStack st;
+            if (!stack_value(kv.second, st)) continue;
+            st.slot = static_cast<int>(std::strtol(kv.first.c_str() + (slot ? slots.size() : stacks.size()), nullptr, DECIMAL));
+            (slot ? s.inventory : s.stack_sizes).push_back(st);
+        }
+
+        auto it = values.find(SELECTED);
+        s.has_inventory = it != values.end();
+        if (s.has_inventory) s.selected_slot = static_cast<int>(std::strtol(it->second.c_str(), nullptr, DECIMAL));
+    }
 };
 
 class ChunkArchive {

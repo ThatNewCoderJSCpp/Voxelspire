@@ -22,6 +22,7 @@ struct SettingsGroups {
     static constexpr const char* GAME        = "Game";
     static constexpr const char* GRAPHICS    = "Graphics";
     static constexpr const char* PERFORMANCE = "Performance";
+    static constexpr const char* PLAYER      = "Player";
     static constexpr const char* GAMEPLAY    = "Gameplay";
     static constexpr const char* SKY         = "Sky";
 };
@@ -43,6 +44,10 @@ struct SettingsTabs {
     static constexpr const char* RENDERING   = "rendering";
     static constexpr const char* SIMULATION  = "simulation";
     static constexpr const char* HUD         = "hud";
+    static constexpr const char* SURVIVAL    = "survival";
+    static constexpr const char* STAMINA     = "stamina_load";
+    static constexpr const char* INVENTORY   = "inventory";
+    static constexpr const char* ITEMS       = "items";
 };
 
 class SettingsPages {
@@ -55,6 +60,7 @@ public:
         registry.add_tab(SettingsTabs::GENERAL, "General", "Display, camera, mouse and this menu", [hooks](SettingsPage& p) { general(p, hooks); });
         registry.add_tab(SettingsTabs::CONTROLS, "Controls", "Change, add or remove key bindings", controls);
         registry.add_tab(SettingsTabs::HUD, "HUD", "The debug panel and crosshair", hud);
+        registry.add_tab(SettingsTabs::INVENTORY, "Inventory", "Hotbar, inventory screen and what the world does while it is open", inventory);
         registry.set_group(SettingsGroups::GRAPHICS);
         registry.add_tab(SettingsTabs::LIGHTING, "Lighting", "Presets, light engine, brightness and light sources", [list](SettingsPage& p) { lighting(p, *list); });
         registry.add_tab(SettingsTabs::SHADOWS, "Shadows", "Sun and lamp shadows", shadows);
@@ -66,10 +72,22 @@ public:
         registry.end_group();
     }
 
+    static void register_player(SettingsRegistry& registry) {
+        registry.set_scope(SettingsScope::World);
+        registry.set_group(SettingsGroups::PLAYER);
+        registry.add_tab(SettingsTabs::CHARACTER, "Character", "Body size and movement speeds", character);
+        registry.add_tab(SettingsTabs::SURVIVAL, "Survival", "Health, hunger, thirst, digestion, breath and damage", survival);
+        registry.add_tab(SettingsTabs::STAMINA, "Stamina & Load", "Stamina, carried weight and how much each activity costs", stamina);
+        registry.add_tab(SettingsTabs::ITEMS, "Items", "Stack sizes and taking items from the item list", items);
+        registry.end_group();
+        registry.set_scope(SettingsScope::Personal);
+    }
+
     static void register_world(SettingsRegistry& registry, const SettingsHooks& hooks, const WaterPresets& water_presets) {
         const WaterPresets* waters = &water_presets;
+        register_player(registry);
+        registry.set_scope(SettingsScope::World);
         registry.set_group(SettingsGroups::GAMEPLAY);
-        registry.add_tab(SettingsTabs::CHARACTER, "Character", "Body size, clothing and movement speeds", character);
         registry.add_tab(SettingsTabs::PHYSICS, "Physics", "Gravity, air resistance, body heat and entity pushing", physics);
         registry.add_tab(SettingsTabs::WATER, "Water", "Presets, how water flows, swimming and wading", [waters](SettingsPage& p) { water(p, *waters); });
         registry.set_group(SettingsGroups::SKY);
@@ -78,6 +96,7 @@ public:
         registry.add_tab(SettingsTabs::SEASONS, "Seasons", "Months, seasons, and how the sun and temperature change through the year", seasons);
         registry.add_tab(SettingsTabs::WEATHER, "Weather", "Rain, snow, storms and temperature", weather);
         registry.end_group();
+        registry.set_scope(SettingsScope::Personal);
     }
 
     static void register_all(SettingsRegistry& registry, const SettingsHooks& hooks, const LightingPresets& presets, const WaterPresets& water_presets) {
@@ -105,6 +124,17 @@ private:
         p.header("Display").applies(Apply::Display);
         p.toggle("VSync", "Match the frame rate to the monitor to stop screen tearing.", field(&GameSettings::display, &DisplaySettings::vsync));
         p.integer("Max FPS", "Frame rate cap. 0 means unlimited.", field(&GameSettings::display, &DisplaySettings::max_fps), DisplayLimits::max_fps).unit("fps");
+        p.header("Resolution").applies(Apply::Nothing);
+        p.choice("3D resolution", "How many pixels the world is drawn with. Fewer pixels is much faster, especially full screen on a big monitor; the menus and HUD always stay sharp. Pick a size like 1080p, or Render scale to choose a share of the window. A size bigger than your window draws at the window's full size.",
+                 field(&GameSettings::display, &DisplaySettings::resolution), { "Render scale", "720p", "1080p", "1440p", "4K (2160p)", "8K (4320p)" });
+        p.when([g = &p.live()] { return g->display.resolution == RenderResolution::Scale; });
+        p.decimal("Render scale", "Share of the window's size the world is drawn at. 1 is full detail, 0.75 draws a little over half the pixels, 0.5 a quarter.", field(&GameSettings::display, &DisplaySettings::render_scale), DisplayLimits::render_scale).unit("x").decimals(2).step(0.05);
+        p.always();
+        p.choice("Upscaling", "How the smaller picture is stretched to fill the window. Sharp keeps edges and textures crisp, Smooth blends pixels softly, Blocky keeps hard square pixels. Only used when the world is drawn below the window's size.",
+                 field(&GameSettings::display, &DisplaySettings::upscale), { "Sharp", "Smooth", "Blocky" });
+        p.when([g = &p.live()] { return g->display.upscale == UpscaleMode::Sharp; });
+        p.decimal("Sharpness", "How strongly Sharp upscaling brings back detail. Higher is crisper, lower is softer.", field(&GameSettings::display, &DisplaySettings::sharpness), DisplayLimits::sharpness).decimals(2).step(0.05);
+        p.always();
 
         p.header("Camera").applies(Apply::Camera);
         p.decimal("Field of view", "How wide the camera sees, measured vertically.", cam(&CameraSettings::fov_y), CL::fov_y).unit("deg").decimals(1);
@@ -161,7 +191,6 @@ private:
         p.decimal("Reach", "How far away you can target blocks.", c(&C::reach), CL::reach).unit("blocks").decimals(1);
         p.applies(Apply::Character | Apply::Physics);
         p.decimal("Body mass", "How heavy you are. Heavier bodies are slowed less by water and, with displacement by weight, push aside more water.", c(&C::mass), CL::mass).unit("kg").decimals(1);
-        p.decimal("Clothing", "How warmly you are dressed, in layers. 1 is normal clothes, 0 is almost nothing, higher keeps out more cold but makes heat worse. Worn items add to this.", c(&C::clothing), CL::clothing).unit("layers").decimals(1);
         p.applies(Apply::Character);
         p.decimal("Standing height", "Height while standing.", c(&C::standing_height), CL::standing_height).unit("blocks");
         p.decimal("Crouching height", "Height while crouching.", c(&C::crouching_height), CL::crouching_height).unit("blocks");
@@ -254,7 +283,6 @@ private:
         p.when([g] { return g->physics.heat.model != HeatModel::Off && g->physics.heat.affects_player; });
         p.header("Body heat");
         p.toggle("Cold and heat slow you", "Being cold, freezing, hot or overheating slows you down.", heat(&H::effects));
-        p.decimal("Degrees per clothing layer", "How many degrees colder you can stand for each extra layer of clothing, and how much hotter you feel.", heat(&H::clothing_degrees), HL::clothing).celsius_change().decimals(1);
 
         p.when([g] { return g->physics.heat.model == HeatModel::Simple && g->physics.heat.affects_player; });
         p.decimal("Cold below", "The cold meter fills when it feels colder than this.", heat(&H::simple_cold), HL::threshold).celsius().decimals(1);
@@ -263,8 +291,8 @@ private:
 
         p.when([g] { return g->physics.heat.model == HeatModel::Realistic && g->physics.heat.affects_player; });
         p.decimal("Normal body temperature", "Your body's normal temperature, which it returns to when comfortable.", heat(&H::normal_body), HL::body).celsius().decimals(1);
-        p.decimal("Comfortable from", "In still air with normal clothes, feeling colder than this slowly cools your body.", heat(&H::comfort_low), HL::comfort).celsius().decimals(1);
-        p.decimal("Comfortable up to", "In still air with normal clothes, feeling hotter than this slowly heats your body.", heat(&H::comfort_high), HL::comfort).celsius().decimals(1);
+        p.decimal("Comfortable from", "In still air with nothing worn, feeling colder than this slowly cools your body. What you wear lets you stand more cold or heat, each item by its own amount.", heat(&H::comfort_low), HL::comfort).celsius().decimals(1);
+        p.decimal("Comfortable up to", "In still air with nothing worn, feeling hotter than this slowly heats your body.", heat(&H::comfort_high), HL::comfort).celsius().decimals(1);
         p.decimal("Heat exchange", "How fast your body changes temperature in still air: body degrees per minute for every degree it feels outside comfortable. Water, wind, rain and the ground make this faster.", heat(&H::exchange_rate), HL::rate).unit("per min").decimals(3);
         p.decimal("Water", "How many times faster you trade heat with water than with still air.", heat(&H::water_exchange), HL::exchange).unit("x").decimals(1);
         p.decimal("Wind", "How much faster you lose or gain heat for each block per second of wind, out in the open.", heat(&H::wind_exchange), HL::exchange).unit("x").decimals(2);
@@ -985,6 +1013,231 @@ private:
         p.decimal("Result time budget", "Time per frame spent finishing background work.", s(&S::result_time_budget_ms), SL::result_time_budget_ms).unit("ms").decimals(1);
     }
 
+    static void need(SettingsPage& p, NeedSettings SurvivalSettings::*which, const char* name, const char* thing, const char* food) {
+        using N  = NeedSettings;
+        using SL = SurvivalLimits;
+        GameSettings* g = &p.live();
+        auto n = [which](auto N::*m) { return field(&GameSettings::survival, which, m); };
+        auto on = [g, which] { return g->survival.enabled && (g->survival.*which).enabled; };
+        const std::string lower = thing;
+
+        p.when([g] { return g->survival.enabled; }).header(name);
+        p.toggle(name, "Whether you have " + lower + " at all. Off keeps it full.", n(&N::enabled));
+        p.when(on);
+        p.decimal("Most " + lower, "How much " + lower + " you can have when full.", n(&N::max), SL::meter).decimals(0).logarithmic();
+        p.decimal("Starting " + lower, "How much you have in a new world and after respawning.", n(&N::start), SL::meter).decimals(0).logarithmic();
+        p.decimal("Used up while resting", std::string("How much goes down per minute when standing still. Moving, sprinting, swimming, cold or heat and a heavy load multiply this (see Stamina & Load). ") + food, n(&N::drain), SL::drain).unit("per min").decimals(2);
+        p.decimal("Weak below", "Below this share you are slowed down.", n(&N::weak_below), SL::fraction).unit("x").decimals(2);
+        p.decimal("Speed when weak", "Movement speed while weak.", n(&N::weak_speed), SL::speed).unit("x").decimals(2);
+        p.toggle("No sprinting when weak", "You can't sprint while weak.", n(&N::weak_no_sprint));
+        p.toggle("Hurts when empty", "Lose health while it is empty.", n(&N::hurts));
+        p.when([g, which, on] { return on() && (g->survival.*which).hurts; });
+        p.choice("Damage style", "Steady: the same damage every few seconds. Building: it gets worse the longer it stays empty, like a body slowly giving out.", n(&N::style), { "Steady", "Building" });
+        p.decimal("Damage", "Health lost each time.", n(&N::damage), SL::damage).decimals(1);
+        p.decimal("Every", "Seconds between damage.", n(&N::interval), SL::interval).unit("s").decimals(1);
+        p.when([g, which, on] { return on() && (g->survival.*which).hurts && (g->survival.*which).style == LossStyle::Building; });
+        p.decimal("Building speed", "How much faster the damage comes for each minute it stays empty.", n(&N::building), SL::building).unit("x/min").decimals(2);
+        p.when([g, which, on] { return on() && (g->survival.*which).hurts; });
+        p.toggle("Can kill", "Whether it can take your last bit of health. Off stops at the lowest health below.", n(&N::can_kill));
+        p.when([g, which, on] { return on() && (g->survival.*which).hurts && !(g->survival.*which).can_kill; });
+        p.decimal("Stops at", "Health it can't take you below.", n(&N::lowest), SL::lowest).decimals(1);
+    }
+
+    static void survival(SettingsPage& p) {
+        using S  = SurvivalSettings;
+        using SL = SurvivalLimits;
+        using HS = HealthSettings;
+        GameSettings* g = &p.live();
+        auto sv  = [](auto S::*m) { return field(&GameSettings::survival, m); };
+        auto hp  = [](auto HS::*m) { return field(&GameSettings::survival, &S::health, m); };
+        auto dr  = [](auto DrinkSettings::*m) { return field(&GameSettings::survival, &S::drink, m); };
+        auto dg  = [](auto DigestionSettings::*m) { return field(&GameSettings::survival, &S::digestion, m); };
+        auto br  = [](auto BreathSettings::*m) { return field(&GameSettings::survival, &S::breath, m); };
+        auto cl  = [](auto ClimateHarmSettings::*m) { return field(&GameSettings::survival, &S::climate, m); };
+        auto on  = [g] { return g->survival.enabled; };
+        auto hon = [g] { return g->survival.enabled && g->survival.health.enabled; };
+
+        p.header("Survival").applies(Apply::Nothing);
+        p.toggle("Survival", "Turns health, hunger, thirst, stamina, breath and load on or off for this world. Off keeps everything full, like creative mode.", sv(&S::enabled));
+
+        p.when(on).header("Health");
+        p.toggle("Health", "Whether you can be hurt at all.", hp(&HS::enabled));
+        p.when(hon);
+        p.decimal("Most health", "Your health when full. Weapons and falls take away health points, not hearts.", hp(&HS::max), SL::health).decimals(1).logarithmic();
+        p.decimal("Starting health", "Health in a new world and after respawning.", hp(&HS::start), SL::health).decimals(1).logarithmic();
+        p.decimal("Health per heart", "How many health points each heart on screen stands for. The full numbers are in your status (inventory key).", hp(&HS::per_heart), SL::per_heart).decimals(1);
+        p.decimal("Damage taken", "Multiplies all damage you take, except falling out of the world.", hp(&HS::damage_scale), SL::scale).unit("x").decimals(2);
+        p.toggle("Can die", "Off keeps you from going below the lowest health below, whatever hurts you.", hp(&HS::can_die));
+        p.when([g, hon] { return hon() && !g->survival.health.can_die; });
+        p.decimal("Lowest health", "Health you can't go below when you can't die.", hp(&HS::lowest), SL::lowest).decimals(1);
+        p.when(hon);
+        p.toggle("Heals over time", "Slowly heal when fed and watered.", hp(&HS::regenerates));
+        p.when([g, hon] { return hon() && g->survival.health.regenerates; });
+        p.decimal("Healing speed", "Health gained per minute while healing.", hp(&HS::regen_rate), SL::regen_rate).unit("per min").decimals(1).logarithmic();
+        p.decimal("Wait after damage", "Seconds after being hurt before healing starts.", hp(&HS::regen_delay), SL::delay).unit("s").decimals(1);
+        p.decimal("Needs hunger above", "Only heal while hunger is at least this share of full.", hp(&HS::regen_hunger), SL::fraction).unit("x").decimals(2);
+        p.decimal("Needs thirst above", "Only heal while thirst is at least this share of full.", hp(&HS::regen_thirst), SL::fraction).unit("x").decimals(2);
+        p.decimal("Hunger per health", "Hunger used up for each point of health healed.", hp(&HS::regen_cost), SL::cost).decimals(2);
+        p.when(hon);
+        p.toggle("Fall damage", "Falling too far hurts. Landing in water softens the fall.", hp(&HS::fall_damage));
+        p.when([g, hon] { return hon() && g->survival.health.fall_damage; });
+        p.decimal("Safe fall", "How far you can fall without being hurt.", hp(&HS::safe_fall), SL::fall).unit("blocks").decimals(1);
+        p.decimal("Damage per block", "Damage for each block fallen past the safe fall.", hp(&HS::fall_per_block), SL::per_block).decimals(2);
+        p.when(hon);
+        p.toggle("Falling out of the world kills", "Off sends you back to spawn instead.", hp(&HS::void_kills));
+
+        need(p, &S::hunger, "Hunger", "hunger", "Eating fills it; food is digested over time when digestion is on.");
+        need(p, &S::thirst, "Thirst", "thirst", "Drinking water fills it.");
+
+        auto thirst_on = [g] { return g->survival.enabled && g->survival.thirst.enabled; };
+        p.when(thirst_on).header("Drinking");
+        p.toggle("Drink from water", "Hold the use key while looking at water to drink.", dr(&DrinkSettings::from_water));
+        p.when([g, thirst_on] { return thirst_on() && g->survival.drink.from_water; });
+        p.decimal("Each sip", "Thirst gained per sip.", dr(&DrinkSettings::amount), SL::drink).decimals(1);
+        p.decimal("Time per sip", "Seconds of holding the use key for each sip.", dr(&DrinkSettings::seconds), SL::drink_time).unit("s").decimals(2);
+        p.toggle("Drinking uses up water", "Each sip takes a little water away. Needs realistic water flow.", dr(&DrinkSettings::takes_water));
+
+        auto digest_on = [g] { return g->survival.enabled && (g->survival.hunger.enabled || g->survival.thirst.enabled); };
+        p.when(digest_on).header("Digestion");
+        p.toggle("Digestion", "Food goes into your stomach first and fills hunger and thirst slowly as it digests. Off fills them the moment you eat.", dg(&DigestionSettings::enabled));
+        p.when([g, digest_on] { return digest_on() && g->survival.digestion.enabled; });
+        p.decimal("Stomach size", "How much food fits before you can't eat more.", dg(&DigestionSettings::capacity), SL::meter).decimals(0).logarithmic();
+        p.decimal("Digesting speed", "How much food is digested per minute.", dg(&DigestionSettings::rate), SL::digest_rate).unit("per min").decimals(1).logarithmic();
+        p.decimal("Stuffed at", "Share of a full stomach where you feel stuffed.", dg(&DigestionSettings::stuffed_at), SL::fraction).unit("x").decimals(2);
+        p.decimal("Speed when stuffed", "Movement speed while stuffed.", dg(&DigestionSettings::stuffed_speed), SL::speed).unit("x").decimals(2);
+
+        auto breath_on = [g] { return g->survival.enabled && g->survival.breath.enabled; };
+        p.when(on).header("Breath");
+        p.toggle("Breath", "Run out of air with your head under water.", br(&BreathSettings::enabled));
+        p.when(breath_on);
+        p.decimal("Air", "Seconds you can hold your breath.", br(&BreathSettings::max), SL::breath).unit("s").decimals(1).logarithmic();
+        p.decimal("Catching your breath", "Seconds of air regained per second above water.", br(&BreathSettings::recover), SL::recover).unit("x").decimals(1);
+        p.decimal("Drowning damage", "Damage each time while out of air.", br(&BreathSettings::damage), SL::damage).decimals(1);
+        p.decimal("Drowning every", "Seconds between drowning damage.", br(&BreathSettings::interval), SL::interval).unit("s").decimals(1);
+
+        p.when(on).header("Cold and heat");
+        p.toggle("Freezing hurts", "Lose health while your body is freezing. Needs heat to affect the player (Physics).", cl(&ClimateHarmSettings::freezing_hurts));
+        p.when([g, on] { return on() && g->survival.climate.freezing_hurts; });
+        p.decimal("Freezing damage", "Damage each time while freezing.", cl(&ClimateHarmSettings::freezing_damage), SL::damage).decimals(1);
+        p.decimal("Freezing every", "Seconds between freezing damage.", cl(&ClimateHarmSettings::freezing_interval), SL::interval).unit("s").decimals(1);
+        p.when(on);
+        p.toggle("Overheating hurts", "Lose health while your body is overheating.", cl(&ClimateHarmSettings::overheating_hurts));
+        p.when([g, on] { return on() && g->survival.climate.overheating_hurts; });
+        p.decimal("Overheating damage", "Damage each time while overheating.", cl(&ClimateHarmSettings::overheating_damage), SL::damage).decimals(1);
+        p.decimal("Overheating every", "Seconds between overheating damage.", cl(&ClimateHarmSettings::overheating_interval), SL::interval).unit("s").decimals(1);
+        p.when(on);
+        p.decimal("Hunger when cold", "Being cold or freezing multiplies how fast hunger goes down.", cl(&ClimateHarmSettings::cold_hunger), SL::multiplier).unit("x").decimals(2);
+        p.decimal("Thirst when hot", "Being hot multiplies how fast thirst goes down.", cl(&ClimateHarmSettings::hot_thirst), SL::multiplier).unit("x").decimals(2);
+        p.decimal("Thirst when overheating", "Overheating multiplies how fast thirst goes down.", cl(&ClimateHarmSettings::overheating_thirst), SL::multiplier).unit("x").decimals(2);
+    }
+
+    static void activity(SettingsPage& p, ActivityCost ExertionSettings::*which, const std::string& name, const std::string& doing, bool uses_stamina) {
+        using SL = SurvivalLimits;
+        auto a = [which](double ActivityCost::*m) { return field(&GameSettings::survival, &SurvivalSettings::effort, which, m); };
+        if (uses_stamina) p.decimal(name + ": stamina", "Stamina used per second while " + doing + ".", a(&ActivityCost::stamina), SL::stamina_use).unit("per s").decimals(1);
+        p.decimal(name + ": hunger", "How many times faster hunger goes down while " + doing + ".", a(&ActivityCost::hunger), SL::multiplier).unit("x").decimals(2);
+        p.decimal(name + ": thirst", "How many times faster thirst goes down while " + doing + ".", a(&ActivityCost::thirst), SL::multiplier).unit("x").decimals(2);
+    }
+
+    static void stamina(SettingsPage& p) {
+        using SL = SurvivalLimits;
+        using ST = StaminaSettings;
+        using W  = WeightSettings;
+        using E  = ExertionSettings;
+        GameSettings* g = &p.live();
+        auto st = [](auto ST::*m) { return field(&GameSettings::survival, &SurvivalSettings::stamina, m); };
+        auto wt = [](auto W::*m) { return field(&GameSettings::survival, &SurvivalSettings::weight, m); };
+        auto ef = [](auto E::*m) { return field(&GameSettings::survival, &SurvivalSettings::effort, m); };
+        auto on  = [g] { return g->survival.enabled; };
+        auto son = [g] { return g->survival.enabled && g->survival.stamina.enabled; };
+        auto won = [g] { return g->survival.enabled && g->survival.weight.enabled; };
+
+        p.when(on).header("Stamina").applies(Apply::Nothing);
+        p.toggle("Stamina", "Sprinting, swimming strokes and jumping tire you out.", st(&ST::enabled));
+        p.when(son);
+        p.decimal("Most stamina", "Stamina when fully rested.", st(&ST::max), SL::meter).decimals(0).logarithmic();
+        p.decimal("Starting stamina", "Stamina in a new world and after respawning.", st(&ST::start), SL::meter).decimals(0).logarithmic();
+        p.decimal("Recovery", "Stamina regained per second while resting.", st(&ST::regen), SL::regen).unit("per s").decimals(1).logarithmic();
+        p.decimal("Rest before recovering", "Seconds without effort before stamina comes back.", st(&ST::regen_delay), SL::delay).unit("s").decimals(1);
+        p.decimal("Recovered at", "After running out, you count as exhausted until stamina is back to this share.", st(&ST::recover_at), SL::fraction).unit("x").decimals(2);
+        p.decimal("Recovery when hungry", "Recovery speed while hungry or thirsty.", st(&ST::weak_regen), SL::fraction).unit("x").decimals(2);
+        p.decimal("Hunger per full stamina", "Hunger used up for each full bar of stamina spent.", st(&ST::hunger_cost), SL::cost).decimals(1);
+        p.decimal("Thirst per full stamina", "Thirst used up for each full bar of stamina spent.", st(&ST::thirst_cost), SL::cost).decimals(1);
+
+        p.when(son).header("When exhausted");
+        p.choice("Sprinting", "What happens to sprinting while exhausted.", st(&ST::sprint), { "Still sprint", "Slower sprint", "Can't sprint" });
+        p.when([g, son] { return son() && g->survival.stamina.sprint == ExhaustedSprint::Slower; });
+        p.decimal("Sprint speed", "Sprint speed while exhausted.", st(&ST::sprint_speed), SL::speed).unit("x").decimals(2);
+        p.when(son);
+        p.toggle("Can't jump", "No jumping while exhausted.", st(&ST::no_jump));
+        p.decimal("Sink in water", "How hard you are pulled down in water while exhausted.", st(&ST::sink), SL::sink).unit("b/s2").decimals(1);
+        p.decimal("Swimming up", "How well you can still swim upward while exhausted.", st(&ST::rise), SL::fraction).unit("x").decimals(2);
+        p.toggle("Pushing on hurts", "Lose health while you keep trying to sprint or swim hard with no stamina left.", st(&ST::hurts));
+        p.when([g, son] { return son() && g->survival.stamina.hurts; });
+        p.decimal("Damage", "Health lost each time.", st(&ST::damage), SL::damage).decimals(1);
+        p.decimal("Every", "Seconds between damage.", st(&ST::interval), SL::interval).unit("s").decimals(1);
+
+        p.when(on).header("Load");
+        p.toggle("Weight", "What you carry and wear slows you down when heavy.", wt(&W::enabled));
+        p.when(won);
+        p.decimal("Extra carried weight", "Weight you always carry on top of anything you wear or hold.", wt(&W::carried), SL::kilograms).unit("kg").decimals(1);
+        p.decimal("Comfortable up to", "Carrying up to this has no effect.", wt(&W::comfortable), SL::kilograms).unit("kg").decimals(1);
+        p.decimal("Most you can carry", "At this weight you are as slow as heavy gets; more than this and you are overloaded.", wt(&W::max), SL::kilograms).unit("kg").decimals(1);
+        p.decimal("Speed when heavy", "Movement speed at the most you can carry. In between it changes smoothly.", wt(&W::heavy_speed), SL::speed).unit("x").decimals(2);
+        p.decimal("Speed when overloaded", "Movement speed past the most you can carry.", wt(&W::overloaded_speed), SL::speed).unit("x").decimals(2);
+        p.toggle("No jumping when overloaded", "Can't jump past the most you can carry.", wt(&W::overloaded_no_jump));
+        p.toggle("No sprinting when overloaded", "Can't sprint past the most you can carry.", wt(&W::overloaded_no_sprint));
+        p.decimal("Extra stamina use", "How much more stamina everything costs at the most you can carry.", wt(&W::stamina_extra), SL::multiplier).unit("x").decimals(2);
+        p.decimal("Extra hunger", "How much faster hunger and thirst go down at the most you can carry.", wt(&W::hunger_extra), SL::multiplier).unit("x").decimals(2);
+        p.decimal("Sink in water", "How hard a heavy load pulls you down in water.", wt(&W::swim_sink), SL::sink).unit("b/s2").decimals(1);
+
+        p.when(on).header("What each activity costs");
+        activity(p, &E::idle,   "Resting",        "standing still",         true);
+        activity(p, &E::walk,   "Walking",        "walking",                true);
+        activity(p, &E::sprint, "Sprinting",      "sprinting",              true);
+        activity(p, &E::crouch, "Sneaking",       "crouching",              true);
+        activity(p, &E::crawl,  "Crawling",       "crawling",               true);
+        activity(p, &E::tread,  "Treading water", "floating in water",      true);
+        activity(p, &E::stroke, "Swimming",       "doing swimming strokes", true);
+        activity(p, &E::fly,    "Flying",         "flying",                 true);
+        p.decimal("Jump: stamina", "Stamina used by each jump.", ef(&E::jump_stamina), SL::jump_use).decimals(1);
+        p.decimal("Jump: hunger", "Hunger used by each jump.", ef(&E::jump_hunger), SL::jump_need).decimals(2);
+        p.decimal("Jump: thirst", "Thirst used by each jump.", ef(&E::jump_thirst), SL::jump_need).decimals(2);
+    }
+
+    static void inventory(SettingsPage& p) {
+        using I  = InventorySettings;
+        using IL = InventoryLimits;
+        auto inv = [](auto I::*m) { return field(&GameSettings::inventory, m); };
+
+        p.header("While open").applies(Apply::Nothing);
+        p.choice("While the inventory is open", "Keep running: the world carries on as normal. Pause world: nothing in the world moves while you sort your items. Pause and hide: the world also stops being drawn, which frees up the most speed.", inv(&I::while_open), { "Keep running", "Pause world", "Pause and hide" });
+
+        p.header("Hotbar");
+        p.toggle("Show hotbar", "The ten slots at the bottom of the screen.", inv(&I::show_hotbar));
+        p.toggle("Show counts", "How many items are in each slot.", inv(&I::show_counts));
+        p.toggle("Show slot numbers", "The key for each hotbar slot, 1 to 9 and 0.", inv(&I::show_numbers));
+        p.toggle("Scroll wraps around", "Scrolling past the last slot goes back to the first.", inv(&I::scroll_wraps));
+        p.toggle("Reverse scrolling", "Scroll the other way through the hotbar.", inv(&I::invert_scroll));
+        p.decimal("Slot size", "Size of each inventory and hotbar slot.", inv(&I::slot_size), IL::slot_size).unit("px").decimals(0);
+        p.decimal("Hotbar height", "Space between the bottom of the screen and the hotbar.", inv(&I::hotbar_bottom), IL::hotbar_bottom).unit("px").decimals(0);
+
+        p.header("Colors");
+        p.color("Slot", "Empty slot color (A is opacity).", inv(&I::slot_color), true);
+        p.color("Slot under the mouse", "Slot color when pointed at (A is opacity).", inv(&I::slot_hover), true);
+        p.color("Selected slot", "Outline of the selected hotbar slot.", inv(&I::selected_color), true);
+        p.color("Counts", "Item count text.", inv(&I::count_color));
+        p.color("Hidden world", "What fills the screen when the world is hidden behind the inventory.", inv(&I::hidden_world));
+    }
+
+    static void items(SettingsPage& p) {
+        using R = ItemRules;
+        auto it = [](auto R::*m) { return field(&GameSettings::items, m); };
+        p.header("Items").applies(Apply::Nothing);
+        p.integer("Default stack size", "How many of an item fit in one slot when the item does not set its own size. Each item can also be changed on its own: right-click it in the inventory.", it(&R::default_stack), ItemLimits::stack);
+        p.toggle("Take items from the item list", "Clicking an item in All items puts it in your hand; shift-click takes a full stack. Meant for testing until creative mode exists.", it(&R::catalog_gives));
+    }
+
     static void hud(SettingsPage& p) {
         using H  = HudSettings;
         using HL = HudLimits;
@@ -1003,6 +1256,27 @@ private:
         p.toggle("Lighting section", "Lights, light data and the light where you stand.", sec(&HudSections::lighting));
 
         p.choice("Temperature unit", "Show temperatures in Celsius or Fahrenheit.", field(&GameSettings::weather_view, &WeatherViewSettings::unit), { "Celsius", "Fahrenheit" });
+
+        p.header("Health and needs");
+        auto vt = [](auto VitalsHudSettings::*m) { return field(&GameSettings::hud, &H::vitals, m); };
+        const std::vector<std::string> modes{ "Always", "When changing", "Never" };
+        p.toggle("Health and needs", "Hearts and bars at the bottom of the screen. The full numbers are always in your status (inventory key).", vt(&VitalsHudSettings::show));
+        p.toggle("Hearts", "Show health as hearts.", vt(&VitalsHudSettings::hearts));
+        p.choice("Hunger bar", "When to show the hunger bar.", vt(&VitalsHudSettings::hunger), modes);
+        p.choice("Thirst bar", "When to show the thirst bar.", vt(&VitalsHudSettings::thirst), modes);
+        p.choice("Stamina bar", "When to show the stamina bar. When changing hides it while full.", vt(&VitalsHudSettings::stamina), modes);
+        p.choice("Breath bubbles", "When to show air bubbles. When changing shows them under water.", vt(&VitalsHudSettings::breath), modes);
+        p.decimal("Size", "Size of the hearts and bars.", vt(&VitalsHudSettings::scale), VitalsHudLimits::scale).unit("x");
+        p.integer("Height from bottom", "Space between the bottom of the screen and the hearts.", vt(&VitalsHudSettings::bottom), VitalsHudLimits::bottom).unit("px");
+        p.decimal("Hide after", "Seconds a bar stays after filling up, when shown only while changing.", vt(&VitalsHudSettings::linger), VitalsHudLimits::linger).unit("s").decimals(1);
+        p.decimal("Shake below", "Hearts shake when health is below this share.", vt(&VitalsHudSettings::low_flash), VitalsHudLimits::low_flash).unit("x").decimals(2);
+        p.color("Heart color", "Full hearts.", vt(&VitalsHudSettings::heart));
+        p.color("Empty heart color", "Empty hearts (A is opacity).", vt(&VitalsHudSettings::heart_empty), true);
+        p.color("Hunger color", "Hunger bar.", vt(&VitalsHudSettings::hunger_color));
+        p.color("Thirst color", "Thirst bar.", vt(&VitalsHudSettings::thirst_color));
+        p.color("Stamina color", "Stamina bar.", vt(&VitalsHudSettings::stamina_color));
+        p.color("Breath color", "Air bubbles.", vt(&VitalsHudSettings::breath_color));
+        p.color("Status background", "Background of your status panel (A is opacity).", vt(&VitalsHudSettings::panel_back), true);
 
         p.header("Layout");
         p.choice("Corner", "Which corner the panel sits in.", h(&H::corner), { "Top left", "Top right", "Bottom left", "Bottom right" });

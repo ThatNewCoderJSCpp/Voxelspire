@@ -10,6 +10,7 @@
 #include <vector>
 #include "../core/process_memory.hpp"
 #include "../core/settings.hpp"
+#include "../physics/heat.hpp"
 #include "../world/chunk_streamer.hpp"
 #include "../world/voxel_raycast.hpp"
 #include "world_renderer.hpp"
@@ -89,7 +90,7 @@ struct HudInfo {
     double        heat_surround      = 0.0;
     double        heat_exchange      = 1.0;
     bool          heat_player        = true;
-    double        clothing           = 0.0;
+    HeatGear      gear;
     std::string   body_state;
         
     fizmo::windows::GpuTimings gpu;
@@ -213,7 +214,7 @@ public:
             if (info.heat_on) {
                 if (info.heat_player) row("Body", temperature_text(info.body_temperature, info.temperature_unit) + ", " + info.body_state);
                 else row("Body", "not affected by heat");
-                row("Feels like", temperature_text(info.felt_temperature, info.temperature_unit) + format(", clothing %.1f", info.clothing));
+                row("Feels like", temperature_text(info.felt_temperature, info.temperature_unit) + (info.gear.any() ? ", worn: stands " + change_text(info.gear.cold_degrees, info.temperature_unit) + " more cold, " + change_text(info.gear.hot_degrees, info.temperature_unit) + " hotter" : std::string()));
                 row("Around you", temperature_text(info.heat_surround, info.temperature_unit) + ", +" + change_text(info.heat_warmth, info.temperature_unit)
                     + format(" from heat sources, losing heat %.1fx as fast as in still air", info.heat_exchange));
             }

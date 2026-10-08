@@ -21,18 +21,32 @@ struct HeatSource {
 };
 
 struct HeatGear {
-    double insulation = 0.0;
-    double warmth     = 0.0;
-    double cooling    = 0.0;
-    double speed      = 1.0;
+    double cold_degrees = 0.0;
+    double hot_degrees  = 0.0;
+    double wind_block   = 0.0;
+    double rain_block   = 0.0;
+    double water_block  = 0.0;
+    double warmth       = 0.0;
+    double cooling      = 0.0;
+    double speed        = 1.0;
 
     HeatGear& operator+=(const HeatGear& o) noexcept {
-        insulation += o.insulation;
-        warmth     += o.warmth;
-        cooling    += o.cooling;
-        speed      *= o.speed;
+        cold_degrees += o.cold_degrees;
+        hot_degrees  += o.hot_degrees;
+        wind_block    = layered(wind_block, o.wind_block);
+        rain_block    = layered(rain_block, o.rain_block);
+        water_block   = layered(water_block, o.water_block);
+        warmth       += o.warmth;
+        cooling      += o.cooling;
+        speed        *= o.speed;
         return *this;
     }
+
+    bool any() const noexcept {
+        return cold_degrees != 0.0 || hot_degrees != 0.0 || wind_block > 0.0 || rain_block > 0.0 || water_block > 0.0 || warmth != 0.0 || cooling != 0.0;
+    }
+
+    static double layered(double a, double b) noexcept { return 1.0 - (1.0 - vclamp(a, 0.0, 1.0)) * (1.0 - vclamp(b, 0.0, 1.0)); }
 };
 
 class HeatGearRegistry {
@@ -212,10 +226,6 @@ public:
         m_meter = 0.0;
     }
 
-    static double clothing_scale(const HeatGear& gear) noexcept {
-        return (1.0 + CharacterSettings::NORMAL_CLOTHING) / (1.0 + vmax(gear.insulation, 0.0));
-    }
-
     static HeatReading read(const HeatEnvironment& e, const HeatGear& gear, const HeatSettings& s) noexcept {
         HeatReading r;
         r.air     = e.air;
@@ -228,8 +238,10 @@ public:
         }
 
         const double sub      = vclamp(e.submerged, 0.0, 1.0);
-        const double air_w    = (1.0 - sub) * (1.0 + (s.wind_exchange * e.wind + s.rain_exchange * e.rain) * e.open_sky);
-        const double water_w  = sub * s.water_exchange;
+        const double wind     = s.wind_exchange * e.wind * (1.0 - gear.wind_block);
+        const double rain     = s.rain_exchange * e.rain * (1.0 - gear.rain_block);
+        const double air_w    = (1.0 - sub) * (1.0 + (wind + rain) * e.open_sky);
+        const double water_w  = sub * s.water_exchange * (1.0 - gear.water_block);
         const double ground_w = e.touching ? s.ground_exchange * e.conductivity : 0.0;
         const double total    = air_w + water_w + ground_w;
         const double water    = vclamp(e.air, WATER_MIN, WATER_MAX);
@@ -237,8 +249,7 @@ public:
         r.exchange = total;
         const double neutral   = HALF * (s.comfort_low + s.comfort_high);
         const double deviation = r.surround - neutral;
-        const double clothes   = clothing_scale(gear);
-        r.felt = neutral + deviation * total * (deviation < 0.0 ? clothes : 1.0 / clothes);
+        r.felt = neutral + deviation * total;
         return r;
     }
 
@@ -294,10 +305,9 @@ public:
 
 private:
     void simple(double dt, const HeatSettings& s, const HeatReading& r, const HeatGear& gear) noexcept {
-        const double shift = (gear.insulation - CharacterSettings::NORMAL_CLOTHING) * s.clothing_degrees;
         const double step  = dt / vmax(s.simple_seconds, 1e-3);
-        if (r.felt < s.simple_cold - shift) m_meter -= step;
-        else if (r.felt > s.simple_hot - shift) m_meter += step;
+        if (r.felt < s.simple_cold - gear.cold_degrees) m_meter -= step;
+        else if (r.felt > s.simple_hot - gear.hot_degrees) m_meter += step;
         else m_meter += vclamp(-m_meter, -step * SIMPLE_RECOVERY, step * SIMPLE_RECOVERY);
         m_meter = vclamp(m_meter, -1.0, 1.0);
         m_body = s.normal_body + (m_meter < 0.0 ? m_meter * (s.normal_body - s.freezing_body) : m_meter * (s.overheating_body - s.normal_body));
@@ -306,10 +316,13 @@ private:
     void realistic(double dt, const HeatSettings& s, const HeatReading& r, const HeatGear& gear) noexcept {
         const double minutes = dt / SECONDS_PER_MINUTE;
 
-        if (r.felt < s.comfort_low) {
-            m_body -= s.exchange_rate * (s.comfort_low - r.felt) * minutes;
-        } else if (r.felt > s.comfort_high) {
-            m_body += s.exchange_rate * (r.felt - s.comfort_high) * minutes;
+        const double low  = s.comfort_low - gear.cold_degrees;
+        const double high = s.comfort_high - gear.hot_degrees;
+
+        if (r.felt < low) {
+            m_body -= s.exchange_rate * (low - r.felt) * minutes;
+        } else if (r.felt > high) {
+            m_body += s.exchange_rate * (r.felt - high) * minutes;
         } else {
             const double back = s.recovery_rate * minutes;
             m_body += vclamp(s.normal_body - m_body, -back, back);

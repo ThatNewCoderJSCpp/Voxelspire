@@ -26,6 +26,15 @@ struct MovementIntent {
     bool   alt     = false;
 };
 
+struct MovementLimits {
+    bool   can_sprint   = true;
+    bool   can_jump     = true;
+    double speed        = 1.0;
+    double sprint_speed = 1.0;
+    double sink         = 0.0;
+    double rise         = 1.0;
+};
+
 struct MovementStats {
     double speed         = 0.0;
     double ground_accel  = 0.0;

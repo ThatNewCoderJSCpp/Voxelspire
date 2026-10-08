@@ -3,14 +3,17 @@
 
 #include <cmath>
 #include <vector>
+#include "../core/limits/engine.hpp"
 #include "../world/block_reader.hpp"
 #include "entity.hpp"
 
 namespace voxelspire {
 
 struct CollisionResult {
-    bool hit_x = false, hit_y = false, hit_z = false;
-    bool   landed = false;
+    bool   hit_x                = false;
+    bool   hit_y                = false;
+    bool   hit_z                = false;
+    bool   landed               = false;
     double landed_after_falling = 0.0;
 };
 
@@ -179,8 +182,10 @@ public:
         return false;
     }
 
-    CollisionResult move(Entity& e, const World& world, const vector3d& delta) {
+    CollisionResult move(Entity& e, const World& world, vector3d delta) {
         CollisionResult r;
+        const double length = delta.magnitude();
+        if (length > EngineLimits::MAX_MOVE_PER_TICK) delta = delta * (EngineLimits::MAX_MOVE_PER_TICK / length);
         const double largest = vmax(std::fabs(delta.x), vmax(std::fabs(delta.y), std::fabs(delta.z)));
         const int steps = vmax(1, static_cast<int>(std::ceil(largest / MAX_STEP)));
         const vector3d d = delta / static_cast<double>(steps);

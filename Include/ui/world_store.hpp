@@ -159,6 +159,15 @@ public:
         return save(record, options, &state);
     }
 
+    bool save_options(const std::string& folder, GameSettings options, const WorldState& state) const {
+        GameSettings stored;
+        WorldRecord record;
+        if (!load(folder, stored, &record)) return false;
+        record.played = now();
+        options.world.seed = record.seed;
+        return save(record, options, &state);
+    }
+
     bool remove(const std::string& folder) const {
         if (folder.empty() || folder.find("..") != std::string::npos) return false;
         std::error_code ec;

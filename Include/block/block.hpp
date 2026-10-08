@@ -104,6 +104,8 @@ struct BlockThermal {
 };
 
 struct BlockProperties {
+    static constexpr double DEFAULT_WEIGHT = 1.5;
+
     bool          solid           = true;
     bool          opaque          = true;
     bool          visible         = true;
@@ -117,6 +119,7 @@ struct BlockProperties {
     BlockShape    shape;
     bool          blends          = true;
     BlockThermal  thermal;
+    double        weight          = DEFAULT_WEIGHT;
 
     static BlockProperties see_through(bool solid, bool fluid = false, int light_opacity = LightLimits::CLEAR) noexcept {
         BlockProperties p;
@@ -134,6 +137,7 @@ struct BlockProperties {
     BlockProperties& conducting(double speed) noexcept { thermal.conductivity = speed; return *this; }
     BlockProperties& no_warmer_than(double celsius) noexcept { thermal.max_temperature = celsius; return *this; }
     BlockProperties& no_colder_than(double celsius) noexcept { thermal.min_temperature = celsius; return *this; }
+    BlockProperties& weighing(double kilograms) noexcept { weight = kilograms; return *this; }
 
     BlockProperties& shaped(const BlockShape& s) noexcept {
         shape     = s;

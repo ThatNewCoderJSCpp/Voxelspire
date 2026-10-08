@@ -15,7 +15,9 @@ enum class Action {
     Jump, Sprint, Crawl, Crouch,
     CycleCamera, OpenMenu, ToggleHud,
     RenderDistanceUp, RenderDistanceDown,
-    CycleLighting, Swim, Alt
+    CycleLighting, Swim, Alt,
+    Inventory, Use,
+    Hotbar1, Hotbar2, Hotbar3, Hotbar4, Hotbar5, Hotbar6, Hotbar7, Hotbar8, Hotbar9, Hotbar10
 };
 
 struct ActionInfo {
@@ -37,6 +39,18 @@ inline const std::vector<ActionInfo>& all_actions() {
         { Action::Crawl,              "crawl",                "Crawl",                 "Lie prone and crawl through one-block gaps." },
         { Action::Swim,               "swim",                 "Swim stroke",           "Swim in the direction you look while in water." },
         { Action::Alt,                "alt",                  "Alternate speed",       "Hold to switch the current movement to its alternate speed." },
+        { Action::Inventory,          "inventory",            "Inventory",             "Open or close your inventory, status and the list of every item." },
+        { Action::Use,                "use",                  "Use / drink",           "Hold while looking at water to drink." },
+        { Action::Hotbar1,            "hotbar_1",             "Hotbar slot 1",         "Select the first hotbar slot." },
+        { Action::Hotbar2,            "hotbar_2",             "Hotbar slot 2",         "Select hotbar slot 2." },
+        { Action::Hotbar3,            "hotbar_3",             "Hotbar slot 3",         "Select hotbar slot 3." },
+        { Action::Hotbar4,            "hotbar_4",             "Hotbar slot 4",         "Select hotbar slot 4." },
+        { Action::Hotbar5,            "hotbar_5",             "Hotbar slot 5",         "Select hotbar slot 5." },
+        { Action::Hotbar6,            "hotbar_6",             "Hotbar slot 6",         "Select hotbar slot 6." },
+        { Action::Hotbar7,            "hotbar_7",             "Hotbar slot 7",         "Select hotbar slot 7." },
+        { Action::Hotbar8,            "hotbar_8",             "Hotbar slot 8",         "Select hotbar slot 8." },
+        { Action::Hotbar9,            "hotbar_9",             "Hotbar slot 9",         "Select hotbar slot 9." },
+        { Action::Hotbar10,           "hotbar_10",            "Hotbar slot 10",        "Select the last hotbar slot, on the far right." },
         { Action::OpenMenu,           "open_menu",            "Settings menu",         "Open or close this menu. Also releases the mouse." },
         { Action::CycleCamera,        "cycle_camera",         "Cycle camera",          "Switch between first person and the third person views." },
         { Action::ToggleHud,          "toggle_hud",           "Toggle HUD",            "Show or hide the debug panel." },
@@ -69,6 +83,18 @@ public:
         b.bind(Action::CycleLighting,      { "F7" });
         b.bind(Action::Swim,               { "LeftShift" });
         b.bind(Action::Alt,                { "LeftAlt" });
+        b.bind(Action::Inventory,          { "e", "E" });
+        b.bind(Action::Use,                { "r", "R" });
+        b.bind(Action::Hotbar1,            { "1" });
+        b.bind(Action::Hotbar2,            { "2" });
+        b.bind(Action::Hotbar3,            { "3" });
+        b.bind(Action::Hotbar4,            { "4" });
+        b.bind(Action::Hotbar5,            { "5" });
+        b.bind(Action::Hotbar6,            { "6" });
+        b.bind(Action::Hotbar7,            { "7" });
+        b.bind(Action::Hotbar8,            { "8" });
+        b.bind(Action::Hotbar9,            { "9" });
+        b.bind(Action::Hotbar10,           { "0" });
         return b;
     }
 

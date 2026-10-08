@@ -26,8 +26,12 @@
 #include "../render/capsule_renderer.hpp"
 #include "../render/hud.hpp"
 #include "../render/reflection_planes.hpp"
+#include "../render/hotbar.hpp"
+#include "../render/vitals_hud.hpp"
 #include "../render/world_renderer.hpp"
 #include "../sky/renderer.hpp"
+#include "../survival/player_survival.hpp"
+#include "../ui/inventory.hpp"
 #include "../ui/pause_menu.hpp"
 #include "../ui/settings_file.hpp"
 #include "../ui/settings_menu.hpp"
@@ -49,6 +53,7 @@ struct WorldSlot {
     std::string                             name;
     WorldState                              state;
     std::function<bool(const WorldState&)>  write_state;
+    std::function<bool(const GameSettings&, const WorldState&)> write_options;
 };
 
 class Game {
@@ -87,6 +92,8 @@ public:
         apply_character();
         apply_physics();
         SettingsPages::register_personal(m_settings_registry, make_hooks(), m_presets);
+        SettingsPages::register_player(m_settings_registry);
+        m_survival.loads().add(INVENTORY_LOAD, "Inventory", [this](const Entity&) { return carried_weight(); });
         m_slot = std::move(slot);
         m_pause.set_subtitle(m_slot.name);
 
@@ -103,6 +110,8 @@ public:
 
     void start(fizmo::windows::Window& window, unsigned int viewport_w, unsigned int viewport_h) {
         m_registry.lock();
+        m_items.lock();
+        restore_inventory(m_slot.state);
         m_cursor = std::make_unique<fizmo::windows::CursorLock>(window);
         const ColumnPos spawn = m_slot.state.has_player ? World::column_of(m_slot.state.position) : m_generator->spawn_column();
         m_streamer.load_now(columns_around(spawn, simulation_distance()));
@@ -113,6 +122,7 @@ public:
         if (m_slot.state.has_player) {
             m_player->respawn(m_slot.state.position);
             m_player->set_look(m_slot.state.yaw, m_slot.state.pitch);
+            restore_vitals(m_slot.state);
         } else {
             respawn_player();
         }
@@ -139,9 +149,11 @@ public:
         state.time       = m_clock.time();
         state.day        = m_clock.day();
         store_weather(state);
+        store_vitals(state);
+        store_inventory(state);
         m_autosave_timer = 0.0;
         m_slot.state     = state;
-        const bool wrote = !m_slot.write_state || m_slot.write_state(state);
+        const bool wrote = write_world_file(state);
         return chunks && wrote;
     }
 
@@ -155,13 +167,14 @@ public:
         using fizmo::windows::WindowEventType;
         if (m_menu.is_open() && m_menu.on_event(e)) { if (e.type == WindowEventType::KeyPress) m_key_consumed = true; return; }
         if (!m_menu.is_open() && m_pause.on_event(e)) { if (e.type == WindowEventType::KeyPress) m_key_consumed = true; return; }
+        if (!paused() && m_inventory_screen.is_open() && m_inventory_screen.on_event(e, inventory_view())) { if (e.type == WindowEventType::KeyPress) m_key_consumed = true; return; }
 
         switch (e.type) {
             case WindowEventType::WindowResize:
                 if (e.x > 0 && e.y > 0) { m_viewport_w = e.x; m_viewport_h = e.y; m_camera.set_viewport(e.x, e.y); }
                 break;
             case WindowEventType::MouseClick:
-                if (m_cursor && !m_cursor->locked() && !paused()) lock_cursor();
+                if (m_cursor && !m_cursor->locked() && !paused() && !m_inventory_screen.is_open()) lock_cursor();
                 break;
             case WindowEventType::KeyPress:
                 m_last_key = e.key_name;
@@ -177,7 +190,12 @@ public:
         m_seconds += frame_dt;
         autosave(frame_dt);
         const InputBindings& keys = m_settings.bindings;
-        if (keys.just_pressed(input, Action::OpenMenu) && !m_key_consumed) toggle_menu();
+        if (keys.just_pressed(input, Action::OpenMenu) && !m_key_consumed) {
+            if (m_inventory_screen.is_open() && !paused()) close_inventory();
+            else toggle_menu();
+        }
+
+        if (keys.just_pressed(input, Action::Inventory) && !m_key_consumed && !paused() && !m_survival.dead()) toggle_inventory();
         m_key_consumed = false;
 
         if (m_menu.is_open()) {
@@ -192,8 +210,11 @@ public:
         const bool playing = !paused();
         if (playing) handle_game_keys(input);
         MovementIntent intent;
+        const bool dead = m_survival.dead();
+        m_drinking = playing && !dead && keys.is_down(input, Action::Use);
+        if (playing && dead && keys.just_pressed(input, Action::Jump)) respawn_player();
 
-        if (playing) {
+        if (playing && !dead && !m_inventory_screen.is_open()) {
             intent.forward = (keys.is_down(input, Action::MoveForward) ? 1.0 : 0.0) - (keys.is_down(input, Action::MoveBack) ? 1.0 : 0.0);
             intent.strafe  = (keys.is_down(input, Action::MoveRight) ? 1.0 : 0.0) - (keys.is_down(input, Action::MoveLeft) ? 1.0 : 0.0);
             if (keys.just_pressed(input, Action::Jump)) m_jump_latch = true;
@@ -207,7 +228,8 @@ public:
 
         m_player->set_intent(intent);
         const auto ticks_start = Clock::now();
-        if (playing || !m_settings.menu.pause_game) advance(frame_dt * vmax(m_settings.simulation.game_speed, 0.0));
+        const bool runs = playing ? !world_paused_for_inventory() : !m_settings.menu.pause_game;
+        if (runs) advance(frame_dt * vmax(m_settings.simulation.game_speed, 0.0));
         const auto streaming_start = Clock::now();
         m_cpu_frame.ticks = ms_between(ticks_start, streaming_start);
         ensure_player_terrain();
@@ -231,11 +253,29 @@ public:
 
     void render(fizmo::windows::Renderer& renderer, double fps_average) {
         const auto render_start = Clock::now();
+        renderer.set_render_scale(static_cast<float>(m_settings.display.scale_for(m_viewport_h)));
+        renderer.set_upscale(upscale_filter(m_settings.display.upscale), static_cast<float>(m_settings.display.sharpness));
         render_frame(renderer, fps_average);
         CpuTimings::blend(m_cpu.render, ms_between(render_start, Clock::now()));
     }
 
+    static fizmo::windows::UpscaleFilter upscale_filter(UpscaleMode mode) noexcept {
+        switch (mode) {
+            case UpscaleMode::Blocky: return fizmo::windows::UpscaleFilter::Nearest;
+            case UpscaleMode::Smooth: return fizmo::windows::UpscaleFilter::Bilinear;
+            case UpscaleMode::Sharp:  break;
+        }
+
+        return fizmo::windows::UpscaleFilter::Sharp;
+    }
+
     void render_frame(fizmo::windows::Renderer& renderer, double fps_average) {
+        if (world_hidden_for_inventory() && !paused()) {
+            renderer.draw_rect(0, 0, m_viewport_w, m_viewport_h, fizmo::graphics::Paint::fill(m_settings.inventory.hidden_world));
+            m_inventory_screen.render(renderer, m_viewport_w, m_viewport_h, inventory_view());
+            return;
+        }
+
         m_terrain.upload(renderer);
         const vector3d eye = m_camera.camera().position();
         fizmo::graphics::Swell3D swell = m_waves.swell(eye);
@@ -292,6 +332,18 @@ public:
 
         track_gpu(renderer);
 
+        if (m_survival.dead()) {
+            m_vitals_hud.render_death(renderer, m_viewport_w, m_viewport_h, m_settings.hud, m_survival, vitals_context());
+            return;
+        }
+
+        m_vitals_hud.update(m_frame_dt, m_survival);
+
+        if (m_inventory_screen.is_open()) {
+            m_inventory_screen.render(renderer, m_viewport_w, m_viewport_h, inventory_view());
+            return;
+        }
+
         if (m_hud.due(m_frame_dt, m_settings.hud)) {
             m_hud.set_info(hud_info(fps_average), m_settings.hud);
             m_gpu_sum = {};
@@ -299,6 +351,8 @@ public:
         }
 
         m_hud.render(renderer, m_viewport_w, m_viewport_h, m_settings.hud);
+        m_hotbar_hud.render(renderer, m_viewport_w, m_viewport_h, m_settings.inventory, m_settings.hud.scale, m_inventory, m_items.items());
+        m_vitals_hud.render(renderer, m_viewport_w, m_viewport_h, m_settings.hud, m_survival, m_seconds);
     }
 
     void track_gpu(fizmo::windows::Renderer& renderer) {
@@ -321,8 +375,86 @@ public:
         return out;
     }
 
+    void open_inventory() {
+        if (paused() || m_inventory_screen.is_open()) return;
+        m_inventory_screen.open(inventory_view());
+        if (m_cursor) m_cursor->unlock();
+    }
+
+    void open_inventory(const std::string& tab) {
+        m_inventory_screen.show_tab(tab);
+        open_inventory();
+    }
+
+    void close_inventory() {
+        if (!m_inventory_screen.is_open()) return;
+        m_inventory_screen.close(inventory_view());
+        if (!paused()) lock_cursor();
+    }
+
+    void toggle_inventory() {
+        if (m_inventory_screen.is_open()) close_inventory();
+        else open_inventory();
+    }
+
+    void open_status() { open_inventory(InventoryTabs::STATUS); }
+    void close_status() { close_inventory(); }
+
+    bool inventory_open() const noexcept { return m_inventory_screen.is_open(); }
+
+    bool world_paused_for_inventory() const noexcept {
+        return m_inventory_screen.is_open() && m_settings.inventory.while_open != WhileInventoryOpen::KeepRunning;
+    }
+
+    bool world_hidden_for_inventory() const noexcept {
+        return m_inventory_screen.is_open() && m_settings.inventory.while_open == WhileInventoryOpen::PauseAndHide;
+    }
+
+    InventoryView inventory_view() {
+        InventoryView v;
+        v.inventory      = &m_inventory;
+        v.cursor         = &m_cursor_stack;
+        v.rules          = &m_stack_rules;
+        v.items          = &m_items;
+        v.survival       = &m_survival;
+        v.vitals         = &m_vitals_hud;
+        v.vitals_context = vitals_context();
+        v.menu           = &m_settings.menu;
+        v.settings       = &m_settings.inventory;
+        v.hud            = &m_settings.hud;
+        v.catalog_gives  = m_settings.items.catalog_gives;
+        v.carried        = carried_weight();
+        v.carry_limit    = m_survival.settings().weight.max;
+        v.weight_on      = m_settings.survival.enabled && m_settings.survival.weight.enabled;
+        v.close_key      = m_settings.bindings.describe(Action::Inventory);
+        return v;
+    }
+
+    double carried_weight() {
+        if (m_weight_revision == m_inventory.revision() && m_weight_items == m_items.items().version()) return m_inventory_weight;
+        double kg = 0.0;
+
+        for (int i = 0; i < Inventory::SLOTS; ++i) {
+            const ItemStack& st = m_inventory.at(i);
+            if (!st.empty()) kg += m_items.items().weight(st.item) * st.count;
+        }
+
+        if (!m_cursor_stack.empty()) kg += m_items.items().weight(m_cursor_stack.stack().item) * m_cursor_stack.stack().count;
+        m_inventory_weight = kg;
+        m_weight_revision  = m_inventory.revision();
+        m_weight_items     = m_items.items().version();
+        return kg;
+    }
+
+    Inventory&    inventory()    noexcept { return m_inventory; }
+    StackRules&   stack_rules()  noexcept { return m_stack_rules; }
+    ItemSystem&   items()        noexcept { return m_items; }
+    CursorStack&  cursor_stack() noexcept { return m_cursor_stack; }
+    InventoryScreen& inventory_screen() noexcept { return m_inventory_screen; }
+
     void open_menu() {
         if (paused()) return;
+        if (m_inventory_screen.is_open()) close_inventory();
         m_pause.open();
         if (m_cursor) m_cursor->unlock();
     }
@@ -371,12 +503,28 @@ public:
     SettingsMenu& menu()       noexcept { return m_menu; }
     PauseMenu&    pause_menu() noexcept { return m_pause; }
 
-    bool save_settings() { return SettingsFile::save(m_menu.tabs(), m_settings.menu.file); }
+    bool save_settings() {
+        const bool personal = SettingsFile::save(tabs_in(SettingsScope::Personal), m_settings.menu.file);
+        const bool world = !m_slot.write_options || m_slot.write_options(m_settings, m_slot.state);
+        return personal && world;
+    }
 
     void load_settings() {
-        const SettingsLoad loaded = SettingsFile::load(m_menu.tabs(), m_settings.menu.file);
+        std::vector<SettingsTab> personal = tabs_in(SettingsScope::Personal);
+        const SettingsLoad loaded = SettingsFile::load(personal, m_settings.menu.file);
         apply_settings(loaded.applied);
         m_menu.report_problems(loaded.problems);
+    }
+
+    std::vector<SettingsTab> tabs_in(SettingsScope scope) {
+        std::vector<SettingsTab> out;
+        for (const SettingsTab& t : m_menu.tabs()) if (t.scope == scope) out.push_back(t);
+        return out;
+    }
+
+    bool write_world_file(const WorldState& state) {
+        if (m_slot.write_options) return m_slot.write_options(m_settings, state);
+        return !m_slot.write_state || m_slot.write_state(state);
     }
 
     void rebuild_menu() {
@@ -451,7 +599,7 @@ public:
         info.heat_surround       = m_heat_reading.surround;
         info.heat_exchange       = m_heat_reading.exchange;
         info.heat_player         = m_settings.physics.heat.affects_player;
-        info.clothing            = m_gear.insulation;
+        info.gear                = m_gear;
         info.body_state          = body_state_name(m_body_heat.state(m_settings.physics.heat));
         info.temperature_unit    = m_settings.weather_view.unit;
         info.day_cycle           = m_settings.day_cycle.enabled;
@@ -502,6 +650,7 @@ public:
     std::uint64_t         seed()      const noexcept { return m_settings.world.seed; }
     World&                world()           noexcept { return m_world; }
     Player&               player()          noexcept { return *m_player; }
+    PlayerSurvival&       survival()        noexcept { return m_survival; }
     EntityManager&        entities()        noexcept { return m_entities; }
     GameCamera&           camera()          noexcept { return m_camera; }
     BlockRegistry&        blocks()          noexcept { return m_registry; }
@@ -563,9 +712,11 @@ private:
     void handle_game_keys(const fizmo::windows::InputManager& input) {
         const InputBindings& keys = m_settings.bindings;
 
+        select_hotbar(input);
+
         if (m_ignore_look > 0) {
             --m_ignore_look;
-        } else if (mouse_locked()) {
+        } else if (mouse_locked() && !m_inventory_screen.is_open() && !m_survival.dead()) {
             const double sens = m_settings.controls.mouse_sensitivity;
             const double invert = m_settings.controls.invert_y ? -1.0 : 1.0;
             m_player->add_look(-input.mouse_delta_x() * sens, -input.mouse_delta_y() * sens * invert);
@@ -657,6 +808,132 @@ private:
         m_streamer.load_now(columns_around(m_generator->spawn_column(), 1));
         m_player->respawn(m_generator->spawn_point(m_world));
         m_body_heat.reset(m_settings.physics.heat);
+        m_survival.reset(*m_player);
+    }
+
+    void select_hotbar(const fizmo::windows::InputManager& input) {
+        if (m_inventory_screen.is_open() || m_survival.dead()) return;
+        const InputBindings& keys = m_settings.bindings;
+
+        for (int i = 0; i < Inventory::HOTBAR; ++i)
+            if (keys.just_pressed(input, static_cast<Action>(static_cast<int>(Action::Hotbar1) + i))) m_inventory.select(i);
+
+        const int scroll = input.scroll_delta();
+        if (scroll == 0) return;
+        m_inventory.scroll(m_settings.inventory.invert_scroll ? scroll : -scroll, m_settings.inventory.scroll_wraps);
+    }
+
+    void restore_inventory(const WorldState& state) {
+        m_inventory.clear();
+        m_stack_rules.clear();
+        if (!state.has_inventory) return;
+
+        for (const SavedStack& st : state.stack_sizes) {
+            const ItemHandle h = m_items.items().find(st.item);
+            if (h != NO_ITEM) m_stack_rules.set(h, st.count);
+        }
+
+        for (const SavedStack& st : state.inventory) {
+            const ItemHandle h = m_items.items().find(st.item);
+            if (h != NO_ITEM && Inventory::valid(st.slot) && st.count > 0) m_inventory.set(st.slot, ItemStack{ h, vmin(st.count, m_stack_rules.limit(h)) });
+        }
+
+        m_inventory.select(state.selected_slot);
+    }
+
+    void store_inventory(WorldState& state) {
+        state.has_inventory = true;
+        state.selected_slot = m_inventory.selected();
+        state.inventory.clear();
+        state.stack_sizes.clear();
+
+        for (int i = 0; i < Inventory::SLOTS; ++i) {
+            const ItemStack& st = m_inventory.at(i);
+            const Item* item = m_items.items().get(st.item);
+            if (!st.empty() && item) state.inventory.push_back({ i, item->id().str(), st.count });
+        }
+
+        for (const auto& kv : m_stack_rules.overrides())
+            if (const Item* item = m_items.items().get(kv.first)) state.stack_sizes.push_back({ 0, item->id().str(), kv.second });
+    }
+
+    void restore_vitals(const WorldState& state) {
+        if (!state.has_vitals) { m_survival.reset(*m_player); return; }
+        SurvivalSnapshot snap;
+        snap.valid          = true;
+        snap.dead           = state.dead;
+        snap.health         = state.health;
+        snap.hunger         = state.hunger;
+        snap.thirst         = state.thirst;
+        snap.stamina        = state.stamina;
+        snap.breath         = state.breath;
+        snap.stomach.bulk   = state.stomach_bulk;
+        snap.stomach.energy = state.stomach_energy;
+        snap.stomach.water  = state.stomach_water;
+        m_survival.restore(snap, *m_player);
+    }
+
+    void store_vitals(WorldState& state) const {
+        const SurvivalSnapshot snap = m_survival.snapshot();
+        state.has_vitals     = true;
+        state.dead           = snap.dead;
+        state.health         = snap.health;
+        state.hunger         = snap.hunger;
+        state.thirst         = snap.thirst;
+        state.stamina        = snap.stamina;
+        state.breath         = snap.breath;
+        state.stomach_bulk   = snap.stomach.bulk;
+        state.stomach_energy = snap.stomach.energy;
+        state.stomach_water  = snap.stomach.water;
+    }
+
+    BodyState felt_body() const noexcept {
+        const HeatSettings& h = m_settings.physics.heat;
+        if (h.model == HeatModel::Off || !h.affects_player) return BodyState::Comfortable;
+        return m_body_heat.state(h);
+    }
+
+    void tick_survival(double dt) {
+        SurvivalFrame frame;
+        frame.body            = felt_body();
+        frame.drinking        = m_drinking;
+        frame.realistic_water = m_settings.water.flow == FlowModel::Realistic;
+        frame.water           = m_block_ids.water;
+        frame.now             = m_seconds;
+        m_survival.tick(dt, *m_player, m_world, frame);
+    }
+
+    VitalsContext vitals_context() const {
+        const InputBindings& keys = m_settings.bindings;
+        VitalsContext c;
+        c.activity         = activity_name();
+        c.heat_shown       = m_settings.physics.heat.model != HeatModel::Off && m_settings.physics.heat.affects_player;
+        c.body_temperature = m_body_heat.body();
+        c.body_state       = body_state_name(felt_body());
+        c.unit             = m_settings.weather_view.unit;
+        c.now              = m_seconds;
+        c.close_key        = keys.describe(Action::Inventory);
+        c.respawn_key      = keys.describe(Action::Jump);
+        c.drink_key        = keys.describe(Action::Use);
+        c.water_in_reach   = PlayerSurvival::find_water(m_world, m_player->eye_position(), m_player->look_direction(), m_player->attributes().value(Attributes::BlockReach), m_block_ids.water).found;
+        return c;
+    }
+
+    std::string activity_name() const {
+        const MovementReport& r = m_player->report();
+        const ExertionSettings& e = m_settings.survival.effort;
+        const ActivityCost cost = r.moving || !ExertionTable::rests_when_still(r.activity) ? m_survival.exertion_cost(r.activity, e) : e.idle;
+        const char* name = "Resting";
+        if (r.activity == MovementModes::Sprint && r.moving) name = "Sprinting";
+        else if (r.activity == MovementModes::Walk && r.moving) name = "Walking";
+        else if (r.activity == MovementModes::Crouch && r.moving) name = "Sneaking";
+        else if (r.activity == MovementModes::Crawl && r.moving) name = "Crawling";
+        else if (r.activity == MovementModes::Swim) name = "Treading water";
+        else if (r.activity == MovementModes::Stroke) name = "Swimming";
+        else if (r.activity == MovementModes::Fly) name = "Flying";
+        char buf[TEXT_BUFFER];
+        std::snprintf(buf, sizeof(buf), "%s: hunger x%.1f, thirst x%.1f, stamina %.1f per second", name, cost.hunger, cost.thirst, cost.stamina);
+        return buf;
     }
 
     void touching_ground(HeatEnvironment& e) const {
@@ -700,9 +977,7 @@ private:
         const HeatSettings& s = m_settings.physics.heat;
         const vector3d center = m_player->position() + vector3d{ 0.0, 0.0, m_player->height() * HALF };
         const BlockPos cell = BlockPos::containing(center);
-        HeatGear base;
-        base.insulation = m_settings.character.clothing;
-        m_gear = m_heat_gear.total(*m_player, base);
+        m_gear = m_heat_gear.total(*m_player, HeatGear{});
         HeatEnvironment e;
         e.air       = m_local_weather.temperature;
         e.sources   = m_heat_sensor.warmth(m_world, center, m_frame_lights, s);
@@ -937,13 +1212,16 @@ private:
         update_water_weather(dt);
         m_entities.tick(ctx);
         update_body_heat(dt);
+        tick_survival(dt);
         m_clock.advance(dt, m_settings.day_cycle);
         const double day_seconds = m_settings.day_cycle.real_day_seconds();
         m_date = Calendar::at(m_clock.day(), m_clock.time(), m_settings.seasons);
         m_weather.update(day_seconds > 0.0 ? dt / day_seconds : 0.0, dt, m_settings.weather, m_date, m_weather_rng);
         if (m_jump_latch) { m_jump_latch = false; MovementIntent i = m_player->intent(); i.jump = false; m_player->set_intent(i); }
         const double void_z = m_world.settings().min_z - m_world.settings().void_depth;
-        if (m_player->position().z < void_z) respawn_player();
+        if (m_player->position().z >= void_z) return;
+        if (!m_survival.fell_out(*m_player)) { respawn_player(); return; }
+        m_player->set_position({ m_player->position().x, m_player->position().y, void_z });
     }
 
     using Clock = std::chrono::steady_clock;
@@ -954,6 +1232,7 @@ private:
 
     inline static const vector3d   LEGACY_SUN{ -0.35, 0.55, -1.0 };
     inline static const Identifier HEAT_MODIFIER{ core_id(Kind::Attribute, "body_heat") };
+    inline static const Identifier INVENTORY_LOAD{ core_id(Kind::Survival, "inventory") };
 
     static constexpr int         LOOK_SETTLE_FRAMES   = 2;
     static constexpr double      SECONDS_PER_MINUTE   = 60.0;
@@ -1018,6 +1297,7 @@ private:
     static AttributeRegistry make_attributes() {
         AttributeRegistry r;
         AttributeRegistry::register_defaults(r);
+        SurvivalAttributes::register_all(r);
         return r;
     }
 
@@ -1094,6 +1374,18 @@ private:
     double                          m_heat_speed = 1.0;
     HeatGearRegistry                m_heat_gear;
     HeatGear                        m_gear;
+    PlayerSurvival                  m_survival{ m_settings };
+    VitalsHud                       m_vitals_hud;
+    ItemSystem                      m_items{ m_registry, m_block_ids };
+    Inventory                       m_inventory;
+    CursorStack                     m_cursor_stack;
+    StackRules                      m_stack_rules{ m_items.items(), &m_settings.items };
+    InventoryScreen                 m_inventory_screen;
+    HotbarHud                       m_hotbar_hud;
+    double                          m_inventory_weight = 0.0;
+    std::uint64_t                   m_weight_revision  = ~std::uint64_t(0);
+    std::uint64_t                   m_weight_items     = ~std::uint64_t(0);
+    bool                            m_drinking    = false;
     CalendarDate                    m_date;
     BiomeClimate                    m_climate;
     ClimateField                    m_climate_field;

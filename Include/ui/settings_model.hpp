@@ -48,7 +48,10 @@ struct AltUnit {
     bool   active()        const noexcept { return scale != 0.0; }
     double to(double v)    const noexcept { return v * scale + offset; }
     double from(double v)  const noexcept { return (v - offset) / scale; }
-    Bounds bounds(Bounds b) const noexcept { const double a = to(b.min), c = to(b.max); return { vmin(a, c), vmax(a, c) }; }
+    Bounds bounds(Bounds b) const noexcept {
+        const double a = to(b.min), c = to(b.max), ua = to(b.usual_min), uc = to(b.usual_max);
+        return { vmin(a, c), vmax(a, c), vmin(ua, uc), vmax(ua, uc) };
+    }
 };
 
 struct NumberFormat {
@@ -113,6 +116,8 @@ struct SettingControl {
         return { b.min, vmax(b.max, b.min) };
     }
 
+    Bounds slider() const { return limits().usual(); }
+
     double step() const {
         if (number.step > 0.0) return number.step;
         return integer() ? 1.0 : std::pow(10.0, -decimals());
@@ -121,12 +126,15 @@ struct SettingControl {
     std::vector<std::string> choices() const { return options_source ? options_source() : options; }
 };
 
+enum class SettingsScope : std::uint8_t { Personal = 0, World };
+
 struct SettingsTab {
     std::string                 id;
     std::string                 name;
     std::string                 summary;
     std::vector<SettingControl> controls;
     std::string                 group;
+    SettingsScope               scope = SettingsScope::Personal;
 };
 
 struct NumberCheck {
@@ -201,6 +209,11 @@ auto field(A GameSettings::*a, B A::*b) {
 template <typename A, typename B, typename C>
 auto field(A GameSettings::*a, B A::*b, C B::*c) {
     return [a, b, c](GameSettings& g) -> C& { return ((g.*a).*b).*c; };
+}
+
+template <typename A, typename B, typename C, typename D>
+auto field(A GameSettings::*a, B A::*b, C B::*c, D C::*d) {
+    return [a, b, c, d](GameSettings& g) -> D& { return (((g.*a).*b).*c).*d; };
 }
 
 template <typename T>

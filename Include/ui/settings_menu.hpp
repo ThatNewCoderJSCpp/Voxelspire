@@ -743,28 +743,32 @@ private:
         const bool alt = m_edit.target == Target::Number && m_edit.part == ALT_PART && c->number.alt.active();
         const Bounds b = alt ? c->number.alt.bounds(c->limits()) : c->limits();
         const std::string unit = alt ? " " + c->number.alt.unit : std::string();
-        return std::string(c->integer() && !alt ? "Type a whole number" : "Type a number") + " from " + format_limit(b.min) + unit + " to " + format_limit(b.max) + unit + "." + keys;
+        const std::string kind = c->integer() && !alt ? "Type a whole number" : "Type a number";
+        if (b.open_below() && b.open_above()) return kind + "." + keys;
+        if (b.open_above()) return kind + " of " + format_limit(b.min) + unit + " or more." + keys;
+        if (b.open_below()) return kind + " of " + format_limit(b.max) + unit + " or less." + keys;
+        return kind + " from " + format_limit(b.min) + unit + " to " + format_limit(b.max) + unit + "." + keys;
     }
 
     static double fraction(const SettingControl& c, double v) {
-        const Bounds r = c.limits();
+        const Bounds r = c.slider();
         if (r.max <= r.min) return 0.0;
         if (c.number.log && r.min > 0.0) return vclamp(std::log(vmax(v, r.min) / r.min) / std::log(r.max / r.min), 0.0, 1.0);
         return vclamp((v - r.min) / (r.max - r.min), 0.0, 1.0);
     }
 
     static double from_fraction(const SettingControl& c, double t) {
-        const Bounds r = c.limits();
+        const Bounds r = c.slider();
         t = vclamp(t, 0.0, 1.0);
         if (c.number.log && r.min > 0.0) return r.min * std::pow(r.max / r.min, t);
         return r.min + (r.max - r.min) * t;
     }
 
     static double snapped(const SettingControl& c, double v) {
-        const Bounds r = c.limits();
+        const Bounds r = c.slider();
         const double step = c.step();
         if (step > 0.0) v = r.min + std::round((v - r.min) / step) * step;
-        return r.clamp(v);
+        return c.limits().clamp(v);
     }
 
     void set_number(SettingControl& c, double v) {

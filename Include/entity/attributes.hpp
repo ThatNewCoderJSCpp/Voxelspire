@@ -2,6 +2,7 @@
 #define VOXELSPIRE_ENTITY_ATTRIBUTES_HPP
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -41,15 +42,7 @@ namespace Attributes {
 
 class AttributeRegistry {
 public:
-    struct defaults {
-        static constexpr double movement_speed_max      = 1024.0;
-        static constexpr double jump_velocity_max       = 1024.0;
-        static constexpr double ground_acceleration_max = 4096.0;
-        static constexpr double air_acceleration_max    = 4096.0;
-        static constexpr double gravity_scale_max       =   16.0;
-        static constexpr double drag_scale_max          = 1024.0;
-        static constexpr double reach_max               =   64.0;
-    };
+    static constexpr double NO_LIMIT = std::numeric_limits<double>::infinity();
 
     const Attribute& add(Identifier id, double default_value, double min_value, double max_value) {
         if (!id) throw std::runtime_error("attribute needs an id");
@@ -74,13 +67,13 @@ public:
     void for_each(Fn&& fn) const { m_by_id.for_each([&fn](const std::unique_ptr<Attribute>& a) { fn(*a); }); }
 
     static void register_defaults(AttributeRegistry& r) {
-        r.add(Attributes::MovementSpeed,      PlayerDefaults::movement::movement_speed,      0.0, defaults::movement_speed_max);
-        r.add(Attributes::JumpVelocity,       PlayerDefaults::movement::jump_velocity,       0.0, defaults::jump_velocity_max);
-        r.add(Attributes::GroundAcceleration, PlayerDefaults::movement::ground_acceleration, 0.0, defaults::ground_acceleration_max);
-        r.add(Attributes::AirAcceleration,    PlayerDefaults::movement::air_acceleration,    0.0, defaults::air_acceleration_max);
-        r.add(Attributes::BlockReach,         PlayerDefaults::reach,                         0.0, defaults::reach_max);
-        r.add(Attributes::GravityScale,       1.0,  -defaults::gravity_scale_max,                 defaults::gravity_scale_max);
-        r.add(Attributes::DragScale,          1.0,  0.0,                                          defaults::drag_scale_max);
+        r.add(Attributes::MovementSpeed,      PlayerDefaults::movement::movement_speed,      0.0,       NO_LIMIT);
+        r.add(Attributes::JumpVelocity,       PlayerDefaults::movement::jump_velocity,       0.0,       NO_LIMIT);
+        r.add(Attributes::GroundAcceleration, PlayerDefaults::movement::ground_acceleration, 0.0,       NO_LIMIT);
+        r.add(Attributes::AirAcceleration,    PlayerDefaults::movement::air_acceleration,    0.0,       NO_LIMIT);
+        r.add(Attributes::BlockReach,         PlayerDefaults::reach,                         0.0,       NO_LIMIT);
+        r.add(Attributes::GravityScale,       1.0,                                           -NO_LIMIT, NO_LIMIT);
+        r.add(Attributes::DragScale,          1.0,                                           0.0,       NO_LIMIT);
     }
 
 private:
