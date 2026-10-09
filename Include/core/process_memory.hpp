@@ -8,7 +8,13 @@
 #include "../fizmo.hpp"
 
 #if defined(OS_WINDOWS)
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+    #include <windows.h>
     #include <psapi.h>
+    #undef near
+    #undef far
 #endif
 
 namespace voxelspire {

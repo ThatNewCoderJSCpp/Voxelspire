@@ -8,6 +8,8 @@
         #define NOMINMAX
     #endif
     #include <windows.h>
+    #undef near
+    #undef far
 #endif
 
 namespace voxelspire {
