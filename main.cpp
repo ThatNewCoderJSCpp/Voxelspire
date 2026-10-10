@@ -1,6 +1,13 @@
 #include "Include/game/app.hpp"
 
+#include <filesystem>
+#include <system_error>
+
 int main() {
+#if defined(VOXELSPIRE_PORTABLE)
+    std::error_code cwd_error;
+    std::filesystem::current_path(fizmo::system::paths::executable_dir(), cwd_error);
+#endif
     using namespace fizmo::windows;
     voxelspire::GameSettings settings;
     Application app(1280, 720, "Voxelspire", settings.render.sky_color);
