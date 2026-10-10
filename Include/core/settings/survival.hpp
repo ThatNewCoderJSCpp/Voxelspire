@@ -47,16 +47,7 @@ struct NeedSettings {
 
     static NeedSettings hunger() { return {}; }
 
-    static NeedSettings thirst() {
-        NeedSettings s;
-        s.enabled  = false;
-        s.max      = PlayerDefaults::thirst::max;
-        s.start    = PlayerDefaults::thirst::start;
-        s.drain    = PlayerDefaults::thirst::drain;
-        s.damage   = PlayerDefaults::thirst::damage;
-        s.interval = PlayerDefaults::thirst::interval;
-        return s;
-    }
+    static NeedSettings thirst();
 };
 
 struct DrinkSettings {

@@ -43,10 +43,7 @@ struct ItemProperties {
 
 class Item {
 public:
-    Item(Identifier id, ItemProperties props) : m_id(id), m_props(std::move(props)) {
-        if (m_id.kind() != Kind::Item) throw std::invalid_argument("item identifiers must be of kind item: " + m_id.str());
-        if (m_props.name.empty()) m_props.name = pretty(m_id.name());
-    }
+    Item(Identifier id, ItemProperties props);
 
     virtual ~Item() = default;
 
@@ -60,18 +57,7 @@ public:
     const std::string&    owner()      const { return m_id.owner(); }
     bool                  places_block() const noexcept { return m_props.block != AIR_ID; }
 
-    static std::string pretty(const std::string& raw) {
-        std::string out;
-        bool start = true;
-
-        for (char ch : raw) {
-            if (ch == '_' || ch == '-' || ch == '.') { out += ' '; start = true; continue; }
-            out += start ? static_cast<char>(std::toupper(static_cast<unsigned char>(ch))) : ch;
-            start = false;
-        }
-
-        return out;
-    }
+    static std::string pretty(const std::string& raw);
 
 private:
     friend class ItemRegistry;
@@ -109,22 +95,7 @@ public:
         return *m_items.back();
     }
 
-    const Item& block_item(const BlockRegistry& blocks, BlockId block, std::string category) {
-        const Block& b = blocks.get(block);
-        const BlockTraits& t = blocks.traits(block);
-        const Identifier bid = b.identifier();
-        std::vector<std::string> path{ BLOCKS };
-        for (const std::string& p : bid.path()) path.push_back(p);
-        ItemProperties props;
-        props.block    = block;
-        props.weight   = b.properties().weight;
-        props.look     = ItemLook::Cube;
-        props.category = std::move(category);
-        props.color    = t.face(Face::Up).base;
-        props.side     = t.face(Face::East).base;
-        props.front    = t.face(Face::South).base;
-        return add(Identifier(Kind::Item, bid.owner(), path), props);
-    }
+    const Item& block_item(const BlockRegistry& blocks, BlockId block, std::string category);
 
     const Item* get(ItemHandle h) const noexcept { return h != NO_ITEM && h < m_items.size() ? m_items[h].get() : nullptr; }
 

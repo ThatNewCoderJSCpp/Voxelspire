@@ -31,12 +31,7 @@ public:
     virtual const Biome* biome_at(int, int) const { return nullptr; }
     virtual std::optional<double> climate_temperature(int, int) const { return std::nullopt; }
 
-    virtual std::vector<std::unique_ptr<Chunk>> generate_column(const ColumnPos& col, int min_chunk_z, int max_chunk_z) const {
-        std::vector<std::unique_ptr<Chunk>> out;
-        for (int z = min_chunk_z; z <= max_chunk_z; ++z)
-            if (auto c = generate_chunk({ col.x, col.y, z })) out.push_back(std::move(c));
-        return out;
-    }
+    virtual std::vector<std::unique_ptr<Chunk>> generate_column(const ColumnPos& col, int min_chunk_z, int max_chunk_z) const;
 };
 
 using WorldGeneratorFactory = std::function<std::unique_ptr<WorldGenerator>(const BlockRegistry&, const WorldSettings&)>;
@@ -45,11 +40,7 @@ class RegistryFeatureWriter : public FeatureWriter {
 public:
     explicit RegistryFeatureWriter(const BlockRegistry& registry) : m_registry(registry) {}
 
-    BlockId resolve(const Identifier& block) override {
-        auto it = m_ids.find(block);
-        if (it != m_ids.end()) return it->second;
-        return m_ids.emplace(block, m_registry.require(block)).first->second;
-    }
+    BlockId resolve(const Identifier& block) override;
 
     using FeatureWriter::set;
 
@@ -64,10 +55,7 @@ public:
 
     using RegistryFeatureWriter::set;
 
-    void set(const BlockPos& pos, BlockId block) override {
-        const BlockPos l = pos - m_origin;
-        if (Chunk::in_bounds(l.x, l.y, l.z)) m_chunk.set(l.x, l.y, l.z, block);
-    }
+    void set(const BlockPos& pos, BlockId block) override;
 
     void fill(const BlockPos& lo, const BlockPos& hi, BlockId block) override {
         const BlockPos a = lo - m_origin, b = hi - m_origin;
@@ -86,16 +74,9 @@ public:
 
     using RegistryFeatureWriter::set;
 
-    void set(const BlockPos& pos, BlockId block) override {
-        if (pos.x != m_x || pos.y != m_y) return;
-        const int i = pos.z - m_z0;
-        if (i >= 0 && i < static_cast<int>(m_ids.size())) m_ids[static_cast<std::size_t>(i)] = block;
-    }
+    void set(const BlockPos& pos, BlockId block) override;
 
-    void fill(const BlockPos& lo, const BlockPos& hi, BlockId block) override {
-        if (m_x < lo.x || m_x >= hi.x || m_y < lo.y || m_y >= hi.y) return;
-        for (int z = lo.z; z < hi.z; ++z) set({ m_x, m_y, z }, block);
-    }
+    void fill(const BlockPos& lo, const BlockPos& hi, BlockId block) override;
 
 private:
     int                   m_x, m_y, m_z0;

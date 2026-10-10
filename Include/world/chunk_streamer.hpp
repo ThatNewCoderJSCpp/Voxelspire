@@ -28,174 +28,34 @@ public:
     ChunkStreamer(World& world, const WorldGenerator& generator, JobSystem& jobs)
         : m_world(world), m_generator(generator), m_jobs(jobs) {}
 
-    void request(std::vector<ColumnPos> wanted, const vector3d& center, double keep_distance) {
-        m_wanted = std::move(wanted);
-        m_wanted_set.clear();
-        m_wanted_set.insert(m_wanted.begin(), m_wanted.end());
-        m_center = center;
-        m_keep_distance = keep_distance;
-        unload_far();
-    }
+    void request(std::vector<ColumnPos> wanted, const vector3d& center, double keep_distance);
 
-    void update(int max_jobs) {
-        for (const ColumnPos& c : m_wanted) {
-            if (static_cast<int>(m_in_flight.size()) >= max_jobs) break;
-            if (m_world.column_loaded(c) || m_in_flight.count(c)) continue;
-            submit(c);
-        }
-    }
+    void update(int max_jobs);
 
     void set_archive(const ChunkArchive* archive) noexcept { m_archive = archive; }
 
-    void load_now(const std::vector<ColumnPos>& columns) {
-        for (const ColumnPos& c : columns) {
-            if (m_world.column_loaded(c)) continue;
-            insert(c, restore(m_archive, c, m_generator.generate_column(c, m_world.min_chunk_z(), m_world.max_chunk_z())));
-        }
-    }
+    void load_now(const std::vector<ColumnPos>& columns);
 
-    void note_changes(const std::vector<ChunkPos>& changed) {
-        for (const ChunkPos& p : changed) {
-            const Chunk* c = m_world.chunk_at(p);
-            if (!c || !c->modified()) continue;
-            m_modified.insert(p);
-            m_dirty.insert({ p.x, p.y });
-        }
-    }
+    void note_changes(const std::vector<ChunkPos>& changed);
 
-    bool save(const ChunkArchive& archive) {
-        std::unordered_map<ColumnPos, std::vector<const Chunk*>, ColumnPosHash> columns;
-        for (const ColumnPos& c : m_dirty) columns[c];
+    bool save(const ChunkArchive& archive);
 
-        for (const ChunkPos& p : m_modified) {
-            const ColumnPos c{ p.x, p.y };
-            if (!m_dirty.count(c)) continue;
-            if (const Chunk* chunk = m_world.chunk_at(p)) columns[c].push_back(chunk);
-        }
-
-        for (const auto& kv : m_store) {
-            const ColumnPos c{ kv.first.x, kv.first.y };
-            if (m_dirty.count(c)) columns[c].push_back(kv.second.get());
-        }
-
-        m_dirty.clear();
-        bool ok = true;
-
-        for (const auto& kv : columns) {
-            if (archive.save_column(kv.first, kv.second)) continue;
-            m_dirty.insert(kv.first);
-            ok = false;
-        }
-
-        return ok;
-    }
-
-    ChunkOverrides collect_overrides(int x0, int y0, int x1, int y1) const {
-        ChunkOverrides out;
-        const int cx0 = floor_div(x0, Chunk::SIZE), cx1 = floor_div(x1 - 1, Chunk::SIZE);
-        const int cy0 = floor_div(y0, Chunk::SIZE), cy1 = floor_div(y1 - 1, Chunk::SIZE);
-        auto inside = [&](const ChunkPos& p) { return p.x >= cx0 && p.x <= cx1 && p.y >= cy0 && p.y <= cy1; };
-
-        for (const auto& kv : m_store)
-            if (inside(kv.first)) out[kv.first] = std::make_shared<const Chunk>(*kv.second);
-
-        for (const ChunkPos& p : m_modified) {
-            if (!inside(p)) continue;
-            if (const Chunk* c = m_world.chunk_at(p)) out[p] = std::make_shared<const Chunk>(*c);
-        }
-
-        return out;
-    }
+    ChunkOverrides collect_overrides(int x0, int y0, int x1, int y1) const;
 
     bool wanted(const ColumnPos& c) const noexcept { return m_wanted_set.count(c) != 0; }
 
-    StreamingStats stats() const {
-        StreamingStats s;
-        s.loaded_columns  = m_world.columns().size();
-        s.wanted_columns  = m_wanted.size();
-        s.jobs_in_flight  = m_in_flight.size();
-        s.stored_chunks   = m_store.size();
-        s.modified_loaded = m_modified.size();
-        return s;
-    }
+    StreamingStats stats() const;
 
 private:
-    void submit(const ColumnPos& c) {
-        m_in_flight.insert(c);
-        const WorldGenerator* gen = &m_generator;
-        const int zmin = m_world.min_chunk_z(), zmax = m_world.max_chunk_z();
-        JobSystem* jobs = &m_jobs;
+    void submit(const ColumnPos& c);
 
-        const ChunkArchive* archive = m_archive;
+    void on_generated(const ColumnPos& c, std::vector<std::unique_ptr<Chunk>> chunks);
 
-        m_jobs.submit([this, gen, jobs, archive, c, zmin, zmax] {
-            auto chunks = std::make_shared<std::vector<std::unique_ptr<Chunk>>>(restore(archive, c, gen->generate_column(c, zmin, zmax)));
-            jobs->post([this, c, chunks] { on_generated(c, std::move(*chunks)); });
-        });
-    }
+    static std::vector<std::unique_ptr<Chunk>> restore(const ChunkArchive* archive, const ColumnPos& c, std::vector<std::unique_ptr<Chunk>> generated);
 
-    void on_generated(const ColumnPos& c, std::vector<std::unique_ptr<Chunk>> chunks) {
-        m_in_flight.erase(c);
-        if (!m_wanted_set.count(c) || m_world.column_loaded(c)) return;
-        insert(c, std::move(chunks));
-    }
+    void insert(const ColumnPos& c, std::vector<std::unique_ptr<Chunk>> chunks);
 
-    static std::vector<std::unique_ptr<Chunk>> restore(const ChunkArchive* archive, const ColumnPos& c, std::vector<std::unique_ptr<Chunk>> generated) {
-        if (!archive) return generated;
-        std::vector<std::unique_ptr<Chunk>> saved = archive->load_column(c);
-        if (saved.empty()) return generated;
-
-        for (auto& chunk : generated) {
-            if (!chunk) continue;
-            const int z = chunk->pos().z;
-            const bool replaced = std::any_of(saved.begin(), saved.end(), [z](const std::unique_ptr<Chunk>& s) { return s->pos().z == z; });
-            if (!replaced) saved.push_back(std::move(chunk));
-        }
-
-        return saved;
-    }
-
-    void insert(const ColumnPos& c, std::vector<std::unique_ptr<Chunk>> chunks) {
-        std::vector<std::unique_ptr<Chunk>> final_chunks;
-
-        for (auto& chunk : chunks) {
-            if (!chunk || m_store.count(chunk->pos())) continue;
-            if (chunk->modified()) m_modified.insert(chunk->pos());
-            final_chunks.push_back(std::move(chunk));
-        }
-
-        for (auto it = m_store.begin(); it != m_store.end();) {
-            if (it->first.x == c.x && it->first.y == c.y) {
-                m_modified.insert(it->first);
-                final_chunks.push_back(std::move(it->second));
-                it = m_store.erase(it);
-            } else {
-                ++it;
-            }
-        }
-
-        m_world.insert_column(c, std::move(final_chunks));
-    }
-
-    void unload_far() {
-        std::vector<ColumnPos> drop;
-
-        for (const auto& kv : m_world.columns()) {
-            const ColumnPos& c = kv.first;
-            if (m_wanted_set.count(c)) continue;
-            const double dx = (c.x + 0.5) * Chunk::SIZE - m_center.x, dy = (c.y + 0.5) * Chunk::SIZE - m_center.y;
-            if (dx * dx + dy * dy <= m_keep_distance * m_keep_distance) continue;
-            drop.push_back(c);
-        }
-
-        for (const ColumnPos& c : drop) {
-            for (auto& chunk : m_world.remove_column(c)) {
-                const ChunkPos p = chunk->pos();
-                m_modified.erase(p);
-                if (chunk->modified()) m_store[p] = std::move(chunk);
-            }
-        }
-    }
+    void unload_far();
 
     World&                  m_world;
     const WorldGenerator&   m_generator;

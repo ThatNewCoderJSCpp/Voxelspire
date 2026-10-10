@@ -8,37 +8,12 @@ namespace voxelspire {
 
 class LightingPresets : public PresetList<LightingSettings> {
 public:
-    static LightingPresets builtin() {
-        LightingPresets p;
-
-        for (const LightingSettings& s : { 
-            LightingSettings::off(), 
-            LightingSettings::basic(), 
-            LightingSettings::classic(),
-            LightingSettings::dynamic(), 
-            LightingSettings::realistic(), 
-            LightingSettings::ultra() 
-        }) p.add(s);
-        
-        return p;
-    }
+    static LightingPresets builtin();
 };
 
 class WaterPresets : public PresetList<WaterSettings> {
 public:
-    static WaterPresets builtin() {
-        WaterPresets p;
-
-        for (const WaterSettings& s : {
-            WaterSettings::still(),
-            WaterSettings::minecraft(),
-            WaterSettings::flowing(),
-            WaterSettings::realistic(),
-            WaterSettings::ultra()
-        }) p.add(s);
-
-        return p;
-    }
+    static WaterPresets builtin();
 };
 
 } // namespace voxelspire

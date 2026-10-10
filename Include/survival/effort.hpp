@@ -32,33 +32,11 @@ public:
         e.fixed = true;
     }
 
-    ActivityCost cost(const Identifier& activity, const ExertionSettings& s) const {
-        for (const Entry& e : m_entries) {
-            if (e.activity != activity) continue;
-            if (e.fixed) return e.cost;
-            if (e.member) return s.*(e.member);
-        }
+    ActivityCost cost(const Identifier& activity, const ExertionSettings& s) const;
 
-        return s.walk;
-    }
+    static ExertionTable defaults();
 
-    static ExertionTable defaults() {
-        ExertionTable t;
-        t.link(Activities::Idle,       &ExertionSettings::idle);
-        t.link(MovementModes::Walk,    &ExertionSettings::walk);
-        t.link(MovementModes::Sprint,  &ExertionSettings::sprint);
-        t.link(MovementModes::Crouch,  &ExertionSettings::crouch);
-        t.link(MovementModes::Crawl,   &ExertionSettings::crawl);
-        t.link(MovementModes::Swim,    &ExertionSettings::tread);
-        t.link(MovementModes::Stroke,  &ExertionSettings::stroke);
-        t.link(MovementModes::Flutter, &ExertionSettings::idle);
-        t.link(MovementModes::Fly,     &ExertionSettings::fly);
-        return t;
-    }
-
-    static bool rests_when_still(const Identifier& activity) noexcept {
-        return activity == MovementModes::Walk || activity == MovementModes::Sprint || activity == MovementModes::Crouch || activity == MovementModes::Crawl;
-    }
+    static bool rests_when_still(const Identifier& activity) noexcept;
 
 private:
     struct Entry {
@@ -68,11 +46,7 @@ private:
         bool         fixed  = false;
     };
 
-    Entry& entry(const Identifier& activity) {
-        for (Entry& e : m_entries) if (e.activity == activity) return e;
-        m_entries.push_back({ activity });
-        return m_entries.back();
-    }
+    Entry& entry(const Identifier& activity);
 
     std::vector<Entry> m_entries;
 };
@@ -91,29 +65,9 @@ public:
         m_sources.push_back({ std::move(id), std::move(name), std::move(source) });
     }
 
-    bool remove(const Identifier& id) {
-        for (auto it = m_sources.begin(); it != m_sources.end(); ++it) {
-            if (it->id != id) continue;
-            m_sources.erase(it);
-            return true;
-        }
+    bool remove(const Identifier& id);
 
-        return false;
-    }
-
-    double measure(const Entity& e, std::vector<LoadPart>* parts = nullptr) const {
-        double total = 0.0;
-        if (parts) parts->clear();
-
-        for (const Entry& s : m_sources) {
-            const double kg = s.source(e);
-            if (kg <= 0.0) continue;
-            total += kg;
-            if (parts) parts->push_back({ s.name, kg });
-        }
-
-        return total;
-    }
+    double measure(const Entity& e, std::vector<LoadPart>* parts = nullptr) const;
 
     std::size_t size() const noexcept { return m_sources.size(); }
 

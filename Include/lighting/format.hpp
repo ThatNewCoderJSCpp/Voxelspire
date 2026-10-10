@@ -32,16 +32,9 @@ struct LightLevel {
     constexpr int brightest() const noexcept { return vmax(static_cast<int>(sky), block()); }
     constexpr int channel(int c) const noexcept { return c == 0 ? red : (c == 1 ? green : blue); }
 
-    void raise_block(int r, int g, int b) noexcept {
-        red   = static_cast<std::uint8_t>(vmax(static_cast<int>(red), vclamp(r, 0, LightLimits::MAX)));
-        green = static_cast<std::uint8_t>(vmax(static_cast<int>(green), vclamp(g, 0, LightLimits::MAX)));
-        blue  = static_cast<std::uint8_t>(vmax(static_cast<int>(blue), vclamp(b, 0, LightLimits::MAX)));
-    }
+    void raise_block(int r, int g, int b) noexcept;
 
-    fizmo::graphics::BakedLight baked() const noexcept {
-        auto b = [](int v) { return static_cast<std::uint8_t>(v * BYTE_SCALE); };
-        return fizmo::graphics::BakedLight(b(red), b(green), b(blue), b(sky));
-    }
+    fizmo::graphics::BakedLight baked() const noexcept;
 
     constexpr bool operator==(const LightLevel& o) const noexcept { return sky == o.sky && red == o.red && green == o.green && blue == o.blue; }
     constexpr bool operator!=(const LightLevel& o) const noexcept { return !(*this == o); }

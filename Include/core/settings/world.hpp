@@ -27,9 +27,7 @@ struct WorldDefaults {
     static constexpr double fall_break_depth  = 3.0;
     static constexpr int    fluid_updates     = 4096;
 
-    static std::shared_ptr<const AirResistance> air_resistance() {
-        return std::make_shared<QuadraticDrag>(QuadraticDrag::coefficient_for(terminal_velocity, gravity));
-    }
+    static std::shared_ptr<const AirResistance> air_resistance();
 
     static std::shared_ptr<const FluidResistance> fluid_resistance() {
         return std::make_shared<QuadraticFluidDrag>();
@@ -66,16 +64,7 @@ struct WorldSettings {
 
     double fall_height() const noexcept { return static_cast<double>(max_z - min_z) + void_depth; }
 
-    WorldSettings validated() const {
-        WorldSettings w = *this;
-        w.min_z = vclamp(w.min_z, EngineLimits::WORLD_MIN_Z, EngineLimits::WORLD_MAX_Z - 1);
-        w.max_z = vclamp(w.max_z, w.min_z + 1, EngineLimits::WORLD_MAX_Z);
-        w.horizontal_limit = vclamp(w.horizontal_limit, EngineLimits::CHUNK_SIZE, EngineLimits::WORLD_MAX_HORIZONTAL);
-        if (!w.air_resistance) w.air_resistance = std::make_shared<NoAirResistance>();
-        if (!w.fluid_resistance) w.fluid_resistance = std::make_shared<NoFluidResistance>();
-        if (!w.fluid_rules) w.fluid_rules = std::make_shared<StillFluid>();
-        return w;
-    }
+    WorldSettings validated() const;
 };
 
 struct SaveSettings {

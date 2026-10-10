@@ -21,12 +21,7 @@ constexpr double PI = fizmo::constants::pi();
 constexpr double deg_to_rad(double d) noexcept { return d * fizmo::constants::pi_180(); }
 constexpr double rad_to_deg(double r) noexcept { return r * fizmo::constants::reciprocal_pi_180(); }
 
-inline int floor_to_int(double v) noexcept {
-    constexpr double lo = static_cast<double>(std::numeric_limits<int>::min());
-    constexpr double hi = static_cast<double>(std::numeric_limits<int>::max());
-    if (std::isnan(v)) return 0;
-    return static_cast<int>(vclamp(std::floor(v), lo, hi));
-}
+int floor_to_int(double v) noexcept;
 
 constexpr int floor_div(int a, int b) noexcept { return (a >= 0) ? a / b : -((-a + b - 1) / b); }
 constexpr int floor_mod(int a, int b) noexcept { return a - floor_div(a, b) * b; }
@@ -53,12 +48,7 @@ struct BlockPos {
 };
 
 struct BlockPosHash {
-    std::size_t operator()(const BlockPos& p) const noexcept {
-        std::uint64_t h = static_cast<std::uint32_t>(p.x) * 73856093ull;
-        h ^= static_cast<std::uint32_t>(p.y) * 19349663ull;
-        h ^= static_cast<std::uint32_t>(p.z) * 83492791ull;
-        return static_cast<std::size_t>(h);
-    }
+    std::size_t operator()(const BlockPos& p) const noexcept;
 };
 
 enum class Face : std::uint8_t { West = 0, East, South, North, Down, Up };
@@ -113,14 +103,9 @@ struct AABB {
     AABB translated(const vector3d& d) const noexcept { return { min + d, max + d }; }
     AABB inflated(double e) const noexcept { return { min - vector3d{e, e, e}, max + vector3d{e, e, e} }; }
 
-    AABB united(const AABB& o) const noexcept {
-        return { { vmin(min.x, o.min.x), vmin(min.y, o.min.y), vmin(min.z, o.min.z) },
-                 { vmax(max.x, o.max.x), vmax(max.y, o.max.y), vmax(max.z, o.max.z) } };
-    }
+    AABB united(const AABB& o) const noexcept;
 
-    bool overlaps_on(int axis, const AABB& o, double eps = 1e-9) const noexcept {
-        return component(max, axis) > component(o.min, axis) + eps && component(min, axis) < component(o.max, axis) - eps;
-    }
+    bool overlaps_on(int axis, const AABB& o, double eps = 1e-9) const noexcept;
 
     bool intersects(const AABB& o, double eps = 1e-9) const noexcept {
         return overlaps_on(0, o, eps) && overlaps_on(1, o, eps) && overlaps_on(2, o, eps);

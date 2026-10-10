@@ -44,37 +44,19 @@ class AttributeRegistry {
 public:
     static constexpr double NO_LIMIT = std::numeric_limits<double>::infinity();
 
-    const Attribute& add(Identifier id, double default_value, double min_value, double max_value) {
-        if (!id) throw std::runtime_error("attribute needs an id");
-        if (m_by_id.contains(id)) throw std::runtime_error("attribute already registered: " + id.str());
-        auto attr = std::make_unique<Attribute>(id, default_value, min_value, max_value);
-        const Attribute& ref = *attr;
-        m_by_id.emplace(id, std::move(attr));
-        return ref;
-    }
+    const Attribute& add(Identifier id, double default_value, double min_value, double max_value);
 
     const Attribute* find(Identifier id) const noexcept {
         const auto* slot = m_by_id.find(id);
         return slot ? slot->get() : nullptr;
     }
 
-    const Attribute& get(Identifier id) const {
-        if (const Attribute* a = find(id)) return *a;
-        throw std::runtime_error("unknown attribute: " + id.str());
-    }
+    const Attribute& get(Identifier id) const;
 
     template <typename Fn>
     void for_each(Fn&& fn) const { m_by_id.for_each([&fn](const std::unique_ptr<Attribute>& a) { fn(*a); }); }
 
-    static void register_defaults(AttributeRegistry& r) {
-        r.add(Attributes::MovementSpeed,      PlayerDefaults::movement::movement_speed,      0.0,       NO_LIMIT);
-        r.add(Attributes::JumpVelocity,       PlayerDefaults::movement::jump_velocity,       0.0,       NO_LIMIT);
-        r.add(Attributes::GroundAcceleration, PlayerDefaults::movement::ground_acceleration, 0.0,       NO_LIMIT);
-        r.add(Attributes::AirAcceleration,    PlayerDefaults::movement::air_acceleration,    0.0,       NO_LIMIT);
-        r.add(Attributes::BlockReach,         PlayerDefaults::reach,                         0.0,       NO_LIMIT);
-        r.add(Attributes::GravityScale,       1.0,                                           -NO_LIMIT, NO_LIMIT);
-        r.add(Attributes::DragScale,          1.0,                                           0.0,       NO_LIMIT);
-    }
+    static void register_defaults(AttributeRegistry& r);
 
 private:
     IdentifierTable<std::unique_ptr<Attribute>> m_by_id;
@@ -103,13 +85,7 @@ public:
         m_dirty = true;
     }
 
-    bool remove_modifier(Identifier id) {
-        auto it = std::find_if(m_modifiers.begin(), m_modifiers.end(), [&](const AttributeModifier& m) { return m.id == id; });
-        if (it == m_modifiers.end()) return false;
-        m_modifiers.erase(it);
-        m_dirty = true;
-        return true;
-    }
+    bool remove_modifier(Identifier id);
 
     bool has_modifier(Identifier id) const noexcept {
         for (const auto& m : m_modifiers) if (m.id == id) return true;
@@ -118,17 +94,7 @@ public:
 
     const std::vector<AttributeModifier>& modifiers() const noexcept { return m_modifiers; }
 
-    double value() const noexcept {
-        if (!m_dirty) return m_cached;
-        double v = m_base;
-        for (const auto& m : m_modifiers) if (m.op == ModifierOp::Add) v += m.amount;
-        double scaled = v;
-        for (const auto& m : m_modifiers) if (m.op == ModifierOp::AddMultipliedBase) scaled += v * m.amount;
-        for (const auto& m : m_modifiers) if (m.op == ModifierOp::MultiplyTotal) scaled *= 1.0 + m.amount;
-        m_cached = m_type->clamp(scaled);
-        m_dirty = false;
-        return m_cached;
-    }
+    double value() const noexcept;
 
 private:
     const Attribute*               m_type;
@@ -140,21 +106,13 @@ private:
 
 class AttributeMap {
 public:
-    explicit AttributeMap(const AttributeRegistry& registry) : m_registry(&registry) {
-        registry.for_each([this](const Attribute& a) { m_instances.emplace(a.id(), a); });
-    }
+    explicit AttributeMap(const AttributeRegistry& registry);
 
     bool has(Identifier id) const noexcept { return m_instances.contains(id); }
 
-    AttributeInstance& get(Identifier id) {
-        if (AttributeInstance* i = m_instances.find(id)) return *i;
-        return m_instances.emplace(id, m_registry->get(id));
-    }
+    AttributeInstance& get(Identifier id);
 
-    double value(Identifier id) const {
-        if (const AttributeInstance* i = m_instances.find(id)) return i->value();
-        return m_registry->get(id).default_value();
-    }
+    double value(Identifier id) const;
 
     void set_base(Identifier id, double v) { get(id).set_base(v); }
 

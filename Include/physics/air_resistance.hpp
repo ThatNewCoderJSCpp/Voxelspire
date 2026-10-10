@@ -101,9 +101,7 @@ class QuadraticDrag final : public AirResistance {
 public:
     explicit QuadraticDrag(double per_block) noexcept : m_c(vmax(per_block, 0.0)) {}
 
-    static double coefficient_for(double terminal_velocity, double gravity) noexcept {
-        return terminal_velocity > 0.0 ? std::fabs(gravity) / (terminal_velocity * terminal_velocity) : 0.0;
-    }
+    static double coefficient_for(double terminal_velocity, double gravity) noexcept;
 
     Identifier id() const override { return core_id(Kind::Physics, { "air_resistance", "quadratic_drag" }); }
     double apply(double v, const AirContext& ctx) const override { return v / (1.0 + strength(ctx) * std::fabs(v) * ctx.dt); }

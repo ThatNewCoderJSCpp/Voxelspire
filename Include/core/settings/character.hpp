@@ -54,13 +54,7 @@ struct CharacterSettings {
     double speed_ratio(double speed) const noexcept { return walk_speed > 0.0 ? speed / walk_speed : 0.0; }
     double acceleration_ratio(double accel) const noexcept { return ground_acceleration > 0.0 ? accel / ground_acceleration : 0.0; }
 
-    EntityBody body() const {
-        EntityBody b({ width, standing_height, standing_eye_height });
-        b.set(Poses::Crouching, { width, crouching_height, crouching_eye_height });
-        b.set(Poses::Prone,     { width, crawling_height,  crawling_eye_height });
-        b.set(Poses::Swimming,  { width, swimming_height,  swimming_eye_height });
-        return b;
-    }
+    EntityBody body() const;
 };
 
 } // namespace voxelspire

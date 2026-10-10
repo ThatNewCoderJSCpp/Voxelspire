@@ -82,11 +82,7 @@ private:
         std::uint8_t dirs;
     };
 
-    bool inside(const ChunkPos& p) const noexcept {
-        const int x = p.x - m_x0, y = p.y - m_y0, z = p.z - m_z0;
-        if (x < 0 || y < 0 || z < 0 || x >= m_w || y >= m_h || z >= m_d) return false;
-        return m_in_region[static_cast<std::size_t>(y) * m_w + x] != 0;
-    }
+    bool inside(const ChunkPos& p) const noexcept;
 
     std::size_t index(const ChunkPos& p) const noexcept {
         return (static_cast<std::size_t>(p.z - m_z0) * m_h + (p.y - m_y0)) * m_w + (p.x - m_x0);

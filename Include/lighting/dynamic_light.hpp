@@ -32,25 +32,9 @@ struct DynamicLight {
 
     static DynamicLight torch() { DynamicLight l; l.heat = TORCH_HEAT; return l; }
 
-    static DynamicLight glow(const Color& c, double reach, bool counts_as_light_level = false, double heat = 0.0) {
-        DynamicLight l;
-        l.color  = c;
-        l.radius = reach;
-        l.affects_light_level = counts_as_light_level;
-        l.heat   = heat;
-        return l;
-    }
+    static DynamicLight glow(const Color& c, double reach, bool counts_as_light_level = false, double heat = 0.0);
 
-    static DynamicLight spot(const vector3d& facing, const Color& c, double reach, double half_angle, bool moves, std::uint64_t key = 0) {
-        DynamicLight l;
-        l.color     = c;
-        l.radius    = reach;
-        l.direction = facing;
-        l.cone      = half_angle;
-        l.moving    = moves;
-        l.id        = key;
-        return l;
-    }
+    static DynamicLight spot(const vector3d& facing, const Color& c, double reach, double half_angle, bool moves, std::uint64_t key = 0);
 
     static DynamicLight flashlight(const vector3d& facing, std::uint64_t key = 0) {
         return spot(facing, Color(255, 236, 210), FLASHLIGHT_REACH, FLASHLIGHT_CONE, true, key);
@@ -67,12 +51,7 @@ public:
 
     static constexpr Id REGISTRY_TAG = Id(1) << 62;
 
-    Id add(const DynamicLight& light) {
-        const Id id = ++m_last;
-        auto it = m_lights.emplace(id, light).first;
-        if (it->second.id == 0) it->second.id = id | REGISTRY_TAG;
-        return id;
-    }
+    Id add(const DynamicLight& light);
 
     bool remove(Id id) { return m_lights.erase(id) != 0; }
 

@@ -25,14 +25,7 @@ class StackRules {
 public:
     explicit StackRules(const ItemRegistry& items, const ItemRules* rules = nullptr) : m_items(&items), m_rules(rules) {}
 
-    int limit(ItemHandle item) const {
-        auto it = m_overrides.find(item);
-        if (it != m_overrides.end()) return it->second;
-        const Item* i = m_items->get(item);
-        const int own = i ? i->properties().max_stack : ItemProperties::USE_DEFAULT;
-        if (own != ItemProperties::USE_DEFAULT) return clamp(own);
-        return clamp(m_rules ? m_rules->default_stack : ItemDefaults::stack);
-    }
+    int limit(ItemHandle item) const;
 
     bool overridden(ItemHandle item) const { return m_overrides.count(item) != 0; }
 
@@ -50,9 +43,7 @@ public:
     const std::unordered_map<ItemHandle, int>& overrides() const noexcept { return m_overrides; }
     std::uint64_t version() const noexcept { return m_version; }
 
-    static int clamp(int size) noexcept {
-        return static_cast<int>(vclamp(static_cast<double>(size), ItemLimits::stack.min, ItemLimits::stack.max));
-    }
+    static int clamp(int size) noexcept;
 
 private:
     const ItemRegistry*                 m_items;

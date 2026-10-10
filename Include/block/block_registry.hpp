@@ -44,23 +44,11 @@ public:
 
     const BlockTraits* traits_table() const noexcept { return m_traits.data(); }
 
-    std::optional<BlockId> find(const Identifier& identifier) const {
-        auto it = m_by_id.find(identifier);
-        if (it == m_by_id.end()) return std::nullopt;
-        return it->second;
-    }
+    std::optional<BlockId> find(const Identifier& identifier) const;
 
-    std::optional<BlockId> find(std::string_view text) const {
-        const Identifier identifier = Identifier::find(Kind::Block, text);
-        if (!identifier) return std::nullopt;
-        return find(identifier);
-    }
+    std::optional<BlockId> find(std::string_view text) const;
 
-    BlockId require(const Identifier& identifier) const {
-        const auto id = find(identifier);
-        if (!id) throw std::runtime_error("unknown block: " + (identifier ? identifier.str() : std::string("(none)")));
-        return *id;
-    }
+    BlockId require(const Identifier& identifier) const;
 
     Identifier identifier(BlockId id) const { return get(id).identifier(); }
 

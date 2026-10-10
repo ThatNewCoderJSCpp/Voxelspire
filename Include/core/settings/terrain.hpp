@@ -1,6 +1,7 @@
 #ifndef VOXELSPIRE_CORE_SETTINGS_TERRAIN_HPP
 #define VOXELSPIRE_CORE_SETTINGS_TERRAIN_HPP
 
+#include <map>
 #include <optional>
 #include <string>
 
@@ -28,11 +29,7 @@ struct BiomeOptions {
     std::optional<double> rainfall;
     std::optional<double> waves;
 
-    bool is_default() const noexcept {
-        return enabled && weight == DEFAULT_WEIGHT && size == DEFAULT_SIZE && temperature == 0.0 && humidity == 0.0
-            && top.empty() && filler.empty() && underwater.empty() && cliff.empty() && deep.empty() && !filler_depth && !freezes
-            && !mean_temperature && !daily_swing && !season_swing && !rainfall && !waves;
-    }
+    bool is_default() const noexcept;
 };
 
 struct CaveSettings {
@@ -80,11 +77,7 @@ struct TerrainSettings {
  
     std::map<std::string, BiomeOptions> biomes;
  
-    const BiomeOptions& biome(const std::string& id) const {
-        static const BiomeOptions fallback;
-        auto it = biomes.find(id);
-        return it == biomes.end() ? fallback : it->second;
-    }
+    const BiomeOptions& biome(const std::string& id) const;
  
     BiomeOptions& edit_biome(const std::string& id) { return biomes[id]; }
  

@@ -34,30 +34,17 @@ class SeededRandom {
 public:
     static constexpr std::uint64_t FALLBACK_SEED = 0x9E3779B97F4A7C15ull;
 
-    SeededRandom() : SeededRandom(SecureRandom::integer_or<std::uint64_t>(1, std::numeric_limits<std::uint64_t>::max(), FALLBACK_SEED)) {}
+    SeededRandom();
     explicit SeededRandom(std::uint64_t seed) noexcept { reseed(seed); }
 
-    static SeededRandom at(std::uint64_t seed, std::int64_t x, std::int64_t y, std::int64_t z = 0, std::uint64_t salt = 0) noexcept {
-        std::uint64_t h = mix(seed ^ salt);
-        h = mix(h ^ static_cast<std::uint64_t>(x));
-        h = mix(h ^ static_cast<std::uint64_t>(y));
-        h = mix(h ^ static_cast<std::uint64_t>(z));
-        return SeededRandom(h);
-    }
+    static SeededRandom at(std::uint64_t seed, std::int64_t x, std::int64_t y, std::int64_t z = 0, std::uint64_t salt = 0) noexcept;
 
     void reseed(std::uint64_t seed) noexcept {
         m_state = mix(seed);
         if (m_state == 0) m_state = FALLBACK_SEED;
     }
 
-    std::uint64_t next() noexcept {
-        std::uint64_t x = m_state;
-        x ^= x >> 12;
-        x ^= x << 25;
-        x ^= x >> 27;
-        m_state = x;
-        return x * 0x2545F4914F6CDD1Dull;
-    }
+    std::uint64_t next() noexcept;
 
     template <typename T>
     RandomInteger<T> integer(T lo = T(0), T hi = std::numeric_limits<T>::max()) noexcept {
@@ -79,17 +66,12 @@ public:
         return static_cast<T>(static_cast<U>(static_cast<U>(lo) + value));
     }
 
-    double unit() noexcept { return static_cast<double>(next() >> (64 - SecureRandom::UNIT_BITS)) * SecureRandom::UNIT_SCALE; }
+    double unit() noexcept;
     double range(double lo, double hi) noexcept { return lo + (hi - lo) * unit(); }
     double signed_unit() noexcept { return unit() * 2.0 - 1.0; }
     bool   chance(double p) noexcept { return unit() < p; }
 
-    static std::uint64_t mix(std::uint64_t x) noexcept {
-        x += 0x9E3779B97F4A7C15ull;
-        x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
-        x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
-        return x ^ (x >> 31);
-    }
+    static std::uint64_t mix(std::uint64_t x) noexcept;
 
 private:
     std::uint64_t m_state = FALLBACK_SEED;
